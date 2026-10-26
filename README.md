@@ -6,6 +6,8 @@
 
 纯前端，单文件，零依赖，断网可用。
 
+**在线试用：<https://wall.orange0323.dpdns.org>** （备用：<https://photo-map-wall.pages.dev>）
+
 ![示例：5 张真实照片自动成墙](docs/01-wall.jpg)
 
 ---
@@ -50,6 +52,16 @@
 想放到网站上，把 `index.html` 传到任意静态托管即可（Cloudflare Pages、GitHub Pages、对象存储都行）。只有这一个文件是运行必需的。
 
 > 直接用 `file://` 打开也行：数据全部内联，没有任何 `fetch`，不会撞上 CORS。
+
+### 部署到 Cloudflare Pages
+
+```bash
+node src/build.mjs dist/index.html            # 产物只有这一个文件
+npx wrangler pages project create photo-map-wall --production-branch=main
+npx wrangler pages deploy dist --project-name=photo-map-wall --branch=main
+```
+
+之后再要发布新版本，只需要重复最后一条。自定义域名在 Pages 项目里加，DNS 那边一条 CNAME 指到 `<project>.pages.dev`（橙色小云朵开着）即可。
 
 ---
 
@@ -134,6 +146,12 @@ node test/cdp-drag.mjs                      # 拖动照片：位置记忆、红�
 node test/test-parser.mjs       # 把页面里的 parseExifGps 抠出来，在 node 里跑 9 个样本
 node test/test-demo5.mjs        # 直接读 assets/demo5 的 5 张真实照片，确认 GPS 能解出来
 node test/cdp-exif2.mjs         # 真实走一遍文件上传，确认定位落到正确城市
+```
+
+想把测试跑在线上版本而不是本地文件，加一个环境变量就行：
+
+```bash
+PMW_URL=https://wall.orange0323.dpdns.org node test/cdp-shot.mjs 1600 1000 live.png
 ```
 
 `__selfTest()` 在页面里可随时调用，返回照片数量、省份数、国界环数、红线数、交叉数、每张照片的包围盒以及 `issues`（重叠/出界）列表 —— 上面的脚本都是围绕它做断言的。
