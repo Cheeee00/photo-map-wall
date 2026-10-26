@@ -13,6 +13,14 @@ export async function launch(opts = {}) {
   const win = opts.window || [1600, 1000];
   const profileDir = userDataDir(profile);
 
+  // R13 之后照片会存进 IndexedDB —— 上一轮跑的残留会让这一轮「凭空多出照片」。
+  // 除非显式 `fresh:false`，否则每次起浏览器都从空 profile 开始（同一轮内的 reload 仍然保留数据，
+  // cdp-persist 正是靠这个验证「刷新复原」）。
+  if (opts.fresh !== false) {
+    try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch (e) { }
+  }
+  try { fs.mkdirSync(profileDir, { recursive: true }); } catch (e) { }
+
   const chrome = spawn(chromePath(), [
     '--headless=new',
     `--remote-debugging-port=${port}`,
