@@ -112,3 +112,20 @@
 
 - **删「刚被浏览器写完的图片」会让 node 以 `0xC0000409`（`__fastfail`）硬崩**，而且崩溃前 stdout 缓冲全丢 —— 表现为「一行输出都没有、退出码是个负数」。定位方法：把每一步用 `fs.appendFileSync` 同步写进一个标记文件，崩完看最后一条。修法是**每轮导出一个新目录，谁也不用删**。
 - **`try/finally` 里报结果会吞掉异常**：`finally { const pass = report(); process.exit(pass?0:1) }` 在抛错时 `pass` 仍是 `true`，退出码 0，看起来全绿。必须 `catch(e){fatal=e}` + `process.exit(pass && !fatal)`。这个坑让一份测试白跑了 19 项就报「全部通过」。
+
+---
+
+## 交付 · 2026-10-27 · 重新部署 + 线上冒烟
+
+| # | 动作 | 命令 / 文件 |
+|---|---|---|
+| 1 | 用最新源码重建 | `node src/build.mjs` → `index.html` 987,052 B |
+| 2 | 同步到发布目录并上线 | `npx wrangler pages deploy dist --project-name=photo-map-wall --branch=main` |
+| 3 | 校验「线上字节 == 本地构建」 | 本地 SHA256 `3BF67CE4…CEC4`，`*.pages.dev` 完全一致；自定义域只多出 Cloudflare 自动注入的 Web Analytics beacon（367 B），正文一致 |
+| 4 | 新增线上冒烟测试 | `test/cdp-live.mjs`（17 项，直接打公网 URL） |
+| 5 | 公开文档脱敏 | 内网 IP、私有目录路径从 `TODO.md` / `docs/acceptance.md` 中移除 |
+
+**踩到的坑**
+
+- **`npx ... | Select-Object` 会把 node 的 stderr 吞成一行 `NativeCommandError`**，看不到真正的失败原因。改成 `cmd /c "npx ... > %TEMP%\log 2>&1"` 才拿到完整输出 —— 而实际是**部署成功**，只是 PowerShell 把 stderr 当异常报了。
+- Pages 说「Uploaded 0 files (1 already uploaded)」是**正常去重**（内容哈希未变），不代表没部署；判据要看 `Deployment complete` 的 URL + 线上内容哈希。
