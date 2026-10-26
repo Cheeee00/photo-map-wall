@@ -8,7 +8,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 export const PAGE_FILE = path.join(ROOT, 'index.html');
-export const PAGE_URL = pathToFileURL(PAGE_FILE).href;
+// 设 PMW_URL 可以改为测试已部署的线上地址，例如：
+//   $env:PMW_URL='https://photo-map-wall.pages.dev'; node test/cdp-shot.mjs
+export const PAGE_URL = process.env.PMW_URL || pathToFileURL(PAGE_FILE).href;
 
 export const TMP = path.join(os.tmpdir(), 'photo-map-wall');
 export const SHOTS_DIR = path.join(ROOT, 'test', 'shots');
