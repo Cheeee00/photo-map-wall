@@ -17,10 +17,8 @@ function degreesToRational(degFloat) {
   return [[d, 1], [m, 1], [s, 1000]];
 }
 
-/** 造一张带 GPS 的 JPEG。注意参数顺序是 (lat, lon)，别写反（写反过一次）。 */
-export function buildExifJpeg(lat, lon) {
-  const parts = [];
-  parts.push(Buffer.from([0xFF, 0xD8]));
+/** 拼一个带 GPS 的 APP1(Exif) 段。注意参数顺序是 (lat, lon)，别写反（写反过一次）。 */
+export function buildApp1(lat, lon) {
   // TIFF body
   const body = Buffer.alloc(128);
   let p = 0;
@@ -54,7 +52,20 @@ export function buildExifJpeg(lat, lon) {
   const app1 = Buffer.concat([Buffer.from([0xFF, 0xE1]), Buffer.alloc(2),
                               Buffer.from('Exif\0\0', 'ascii'), body]);
   app1.writeUInt16BE(app1.length - 2, 2);
-  parts.push(app1);
-  parts.push(TINY_JPEG.subarray(2));           // 载体：去掉它自己的 SOI，接在本脚本的 SOI 之后
-  return Buffer.concat(parts);
+  return app1;
+}
+
+/** 造一张带 GPS 的 JPEG（载体是上面的 24×24 小图）。 */
+export function buildExifJpeg(lat, lon) {
+  return Buffer.concat([Buffer.from([0xFF, 0xD8]), buildApp1(lat, lon), TINY_JPEG.subarray(2)]);
+}
+
+/**
+ * 给一张**真实** JPEG 注入 GPS：在 SOI 之后插一个 APP1。
+ * 用于「拿真照片 + 假坐标」造演示图（docs 截图、世界档 showcase）。
+ * 原图必须自己以 FFD8 开头；已带 APP1 也没关系，解析器读第一个。
+ */
+export function injectGps(jpegBuf, lat, lon) {
+  if (jpegBuf[0] !== 0xFF || jpegBuf[1] !== 0xD8) throw new Error('injectGps: 输入不是 JPEG');
+  return Buffer.concat([Buffer.from([0xFF, 0xD8]), buildApp1(lat, lon), jpegBuf.subarray(2)]);
 }
