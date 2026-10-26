@@ -186,8 +186,10 @@
 | 3 | 补第七张截图 | 新增 `test/cdp-docs.mjs` 生成 `docs/07-world.jpg`：拿 `assets/demo5` 的 5 张真照片，用 `_exif.mjs` 新增的 `injectGps()` 各注入一个国外坐标（巴黎/纽约/东京/悉尼/北京），上传后范围自动切全球、地点按国家命名、`crossings:0 issues:0` |
 | 4 | 修 README 的过期事实 | ①「四个占位符」漏了 `//__WORLD_DATA__`，实际是五个 ②降档描述写「…, 84」但代码已到 42 且带 `cascadeLayout()` 兜底 ③仓库结构里 `data/`、`tools/` 没提世界国界 |
 | 5 | 更新 TODO | 「截图靠手截」那条改成分项：全球档已自动生成，其余 6 张仍是手工，并写清全自动还差什么 |
+| 6 | 新增 `tools/check_docs.mjs` | 文档体检：markdown 链接、反引号里的仓库路径、`build.mjs` 占位符数 vs README 的说法、README 里的 `index.html` 字节数 vs 实际产物。首跑抓到 4 类问题（3 个是误报，见下） |
 
 **踩到的坑**
 
 - **测试块截图不能直接进 README**：`test/shots/W3-world-photos.png` 里的照片是合成出来的纯蓝方块（`_exif.mjs` 早期只用 24×24 载体），当配图像坏图。造演示图的正确做法是**真照片 + 注入坐标**，而不是为了配图去伪造拍摄记录 —— 所以先抽出 `buildApp1()`，再加 `injectGps(jpegBuf, lat, lon)` 往真实 JPEG 的 SOI 后插 APP1。
 - **PNG→JPG 仍在 Node 之外**：`test/gen-testimg.mjs` 有纯 Node 的 PNG 编码器，但没有 JPEG 编码器，所以转换这一步还是 pwsh + `System.Drawing`。这也是 TODO 里「截图全自动」没做完的原因之一。
+- **文档体检的第一版一堆误报**：把 `node src/build.mjs` 这种命令行当成路径、把 worklog / acceptance 里「当时那一轮」的产物字节数当成「当前事实」、把 TODO 里还没创建的 `test/security.test.mjs` 当成缺失文件。逐类收窄判据（命令行前缀白名单、只有 README 参与字节数校验、TODO 跳路径检查）之后才是有用的检查 —— **校验器比被测对象更容易写错**。
