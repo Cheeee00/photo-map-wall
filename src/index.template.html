@@ -1,0 +1,1667 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>照片地图墙</title>
+<style>
+  :root{
+    --ink:#1A120C;
+    --paper:#EFE6D4;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;height:100%;overflow:hidden;background:#211D1A;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  #stage{position:fixed;inset:0;}
+  /* 底部留出 76px 给工具条：画布永远不会被工具条压住 */
+  #board{width:100vw;height:calc(100vh - 76px);display:block;touch-action:none;
+    -webkit-user-select:none;user-select:none;}
+
+  /* ---------- 工具条 ---------- */
+  #ui{
+    position:fixed;left:50%;bottom:22px;transform:translateX(-50%);
+    display:flex;align-items:center;gap:6px;padding:7px 9px;
+    background:rgba(28,20,15,.82);
+    border:1px solid rgba(214,190,160,.16);
+    border-radius:999px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,240,220,.06);
+    backdrop-filter:blur(14px) saturate(1.1);
+    -webkit-backdrop-filter:blur(14px) saturate(1.1);
+    z-index:20;
+    transition:opacity .3s, transform .3s;
+  }
+  #ui.hidden{opacity:0;transform:translateX(-50%) translateY(14px);pointer-events:none;}
+  #ui .sep{width:1px;height:20px;background:rgba(214,190,160,.14);margin:0 3px;}
+  .btn{
+    appearance:none;border:0;background:transparent;color:#E8DCCB;
+    font-size:13px;line-height:1;padding:9px 13px;border-radius:999px;cursor:pointer;
+    font-family:inherit;white-space:nowrap;transition:background .15s,color .15s;
+    display:inline-flex;align-items:center;gap:6px;
+  }
+  .btn:hover{background:rgba(245,225,200,.10);}
+  .btn:active{transform:translateY(1px);}
+  .btn.primary{background:rgba(192,57,43,.20);color:#F2C9BF;}
+  .btn.primary:hover{background:rgba(192,57,43,.34);}
+  .btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.7;
+    stroke-linecap:round;stroke-linejoin:round;opacity:.9;}
+  select.gsel{
+    appearance:none;-webkit-appearance:none;
+    background:rgba(245,225,200,.07);color:#E8DCCB;border:1px solid rgba(214,190,160,.16);
+    border-radius:999px;padding:8px 26px 8px 12px;font-size:13px;font-family:inherit;
+    cursor:pointer;outline:none;max-width:132px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='7'><path d='M1 1l4 4 4-4' fill='none' stroke='%23C9B49B' stroke-width='1.6' stroke-linecap='round'/></svg>");
+    background-repeat:no-repeat;background-position:right 10px center;
+  }
+  select.gsel option{background:#241a13;color:#E8DCCB;}
+
+  /* ---------- 拖拽提示 ---------- */
+  #drop{
+    position:fixed;inset:0;z-index:30;display:none;
+    align-items:center;justify-content:center;
+    background:rgba(20,14,10,.72);
+    backdrop-filter:blur(3px);
+    color:#F0E2CE;font-size:20px;letter-spacing:2px;
+    border:2px dashed rgba(192,57,43,.55);border-radius:0;
+  }
+  #drop.on{display:flex;}
+
+  /* ---------- 提示气泡 ---------- */
+  #hint{
+    position:fixed;left:50%;bottom:82px;transform:translateX(-50%);
+    color:rgba(232,220,203,.55);font-size:12.5px;letter-spacing:.6px;
+    pointer-events:none;transition:opacity .6s;z-index:19;white-space:nowrap;
+  }
+  #hint.gone{opacity:0;}
+
+  /* ---------- 照片大图预览 ---------- */
+  #viewer{
+    position:fixed;inset:0;z-index:50;display:none;
+    align-items:center;justify-content:center;
+    background:rgba(16,12,9,.90);
+    backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    opacity:0;transition:opacity .18s;
+    padding:28px;
+  }
+  #viewer.on{display:flex;opacity:1;}
+  #viewerBox{
+    display:flex;flex-direction:column;align-items:center;gap:14px;
+    max-width:100%;max-height:100%;
+    transform:scale(.97);transition:transform .18s;
+  }
+  #viewer.on #viewerBox{transform:scale(1);}
+  #viewerImg{
+    display:block;max-width:min(86vw,1400px);max-height:calc(100vh - 150px);
+    background:#fff;padding:12px 12px 46px;border-radius:2px;
+    box-shadow:0 26px 70px rgba(0,0,0,.62), 0 2px 0 rgba(255,255,255,.5) inset;
+    object-fit:contain;
+  }
+  #viewerBar{
+    display:flex;align-items:center;gap:8px;
+    background:rgba(32,23,17,.94);border:1px solid rgba(214,190,160,.18);
+    border-radius:999px;padding:7px 10px;
+    box-shadow:0 12px 34px rgba(0,0,0,.55);
+  }
+  #viewerBar label{font-size:12px;color:rgba(232,220,203,.55);letter-spacing:.5px;}
+  #viewerBar select{
+    appearance:none;-webkit-appearance:none;
+    background:rgba(245,225,200,.08);color:#E8DCCB;
+    border:1px solid rgba(214,190,160,.18);border-radius:999px;
+    padding:7px 26px 7px 12px;font-size:13px;font-family:inherit;outline:none;cursor:pointer;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='7'><path d='M1 1l4 4 4-4' fill='none' stroke='%23C9B49B' stroke-width='1.6' stroke-linecap='round'/></svg>");
+    background-repeat:no-repeat;background-position:right 9px center;
+  }
+  #viewerBar select option{background:#241a13;}
+  #viewerBar button{
+    appearance:none;border:0;cursor:pointer;font-family:inherit;
+    font-size:13px;line-height:1;padding:9px 14px;border-radius:999px;
+    background:transparent;color:#E8DCCB;transition:background .15s;
+  }
+  #viewerBar .del{background:rgba(192,57,43,.18);color:#E9A79A;}
+  #viewerBar .del:hover{background:rgba(192,57,43,.34);}
+  #viewerBar .reset{background:rgba(245,225,200,.07);color:rgba(232,220,203,.8);}
+  #viewerBar .reset:hover{background:rgba(245,225,200,.16);}
+  #viewerBar .reset[hidden]{display:none;}
+  #viewerBar .close{background:rgba(245,225,200,.10);}
+  #viewerBar .close:hover{background:rgba(245,225,200,.20);}
+
+  /* ---------- SVG 内交互 ---------- */
+  .pin{cursor:grab;}
+  .pin:active{cursor:grabbing;}
+  .polaroid{cursor:grab;}
+  .polaroid.dragging{cursor:grabbing;}
+  .polaroid .card{transition:filter .18s;}
+  .polaroid:hover .card{filter:brightness(1.04);}
+  #mapSurface{cursor:grab;}
+  #mapSurface.panning{cursor:grabbing;}
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <svg id="board" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg"></svg>
+</div>
+
+<div id="hint">拖照片进来 · 或点「加照片」 · 拖动地图上的大头针可改位置</div>
+
+<div id="ui">
+  <button class="btn primary" id="btnAdd">
+    <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>加照片
+  </button>
+  <div class="sep"></div>
+  <select class="gsel" id="selFocus" title="聚焦区域"></select>
+  <div class="sep"></div>
+  <button class="btn" id="btnFit">
+    <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5"/></svg>适应全部
+  </button>
+  <button class="btn" id="btnExport">
+    <svg viewBox="0 0 24 24"><path d="M12 16V4m0 12l-4-4m4 4l4-4M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2"/></svg>导出
+  </button>
+  <div class="sep"></div>
+  <button class="btn" id="btnDemo" title="恢复示例照片">示例</button>
+</div>
+
+<div id="drop">松开以添加到墙</div>
+
+<div id="viewer">
+  <div id="viewerBox">
+    <img id="viewerImg" alt="">
+    <div id="viewerBar">
+      <label>地点</label>
+      <select id="popCity"></select>
+      <button class="reset" id="popReset">回原位</button>
+      <button class="del" id="popDel">移除</button>
+      <button class="close" id="viewerClose">关闭</button>
+    </div>
+  </div>
+</div>
+
+<input id="file" type="file" accept="image/*" multiple hidden>
+
+<script>
+/* =========================================================================
+   照片地图墙 — 单文件 / 纯 SVG / 无外部依赖 / file:// 双击可开
+   ========================================================================= */
+(function () {
+'use strict';
+
+/* ---------------------------------------------------------------- 数据 --- */
+
+//__CHINA_DATA__
+
+//__PROV_DATA__
+
+// 城市表（lon, lat）
+const CITIES = [
+  ['北京',116.407,39.904],['上海',121.474,31.230],['广州',113.264,23.129],['深圳',114.057,22.543],
+  ['成都',104.066,30.572],['重庆',106.551,29.563],['西安',108.940,34.341],['杭州',120.155,30.274],
+  ['南京',118.797,32.060],['武汉',114.305,30.593],['长沙',112.939,28.228],['厦门',118.089,24.480],
+  ['青岛',120.383,36.067],['大连',121.615,38.914],['哈尔滨',126.535,45.803],['沈阳',123.432,41.806],
+  ['长春',125.324,43.887],['呼和浩特',111.749,40.842],['乌鲁木齐',87.617,43.793],['拉萨',91.140,29.645],
+  ['西宁',101.778,36.617],['兰州',103.834,36.061],['银川',106.231,38.487],['昆明',102.833,24.880],
+  ['贵阳',106.630,26.647],['南宁',108.366,22.817],['海口',110.199,20.044],['三亚',109.508,18.247],
+  ['南昌',115.858,28.683],['福州',119.296,26.074],['合肥',117.283,31.861],['石家庄',114.502,38.045],
+  ['太原',112.549,37.857],['郑州',113.625,34.746],['济南',117.121,36.651],['天津',117.200,39.133],
+  ['香港',114.169,22.319],['台北',121.565,25.033],['澳门',113.544,22.199]
+];
+const CITY_INDEX = Object.create(null);
+CITIES.forEach(function (c) { CITY_INDEX[c[0]] = { lon: c[1], lat: c[2] }; });
+
+// 自动分配地点时优先用这几个，保证第一次出图就散得开
+const SPREAD = ['北京','成都','厦门','哈尔滨','乌鲁木齐','广州','西安','杭州','昆明','青岛','拉萨','武汉'];
+
+/* ------------------------------------------------------------- 基础常量 --- */
+const NS = 'http://www.w3.org/2000/svg';
+const BH = 1000;                            // 画布高度固定
+let BW = 1600;                              // 画布宽度随窗口比例变化（见 computeCanvas）
+const D2R = Math.PI / 180;
+
+/* 画布宽度跟随窗口宽高比：viewBox 与窗口同比例 → 铺满，不留黑边 */
+function computeCanvas() {
+  const availH = Math.max(320, window.innerHeight - 76);
+  BW = Math.round(clamp(BH * window.innerWidth / availH, 700, 3400));
+  board.setAttribute('viewBox', '0 0 ' + BW + ' ' + BH);
+}
+
+// 地图件居中，四周留出上/右/下/左四条走廊给照片 → 照片真的绕地图一圈
+// 700×470 ≈ 中国外接框的真实比例（1.43），地图件铺满这一块，照片绕在外圈
+const CARD = { x: 450, y: 265, w: 700, h: 470, rot: -1.2 };
+CARD.cx = CARD.x + CARD.w / 2;
+CARD.cy = CARD.y + CARD.h / 2;
+
+function placeCard() {
+  CARD.cx = BW / 2;
+  CARD.x = CARD.cx - CARD.w / 2;
+  CARD.cy = BH / 2;
+  CARD.y = CARD.cy - CARD.h / 2;
+}
+
+const PIN_R = 7.2;
+
+const PAD = 12;        // 拍立得左右上白边
+const BOT = 46;        // 底部留白
+const GAP = 16;        // 照片间距
+const ROT_MAX = 4;     // 最大旋转角
+
+const AREA = { x: 900, y: 70, w: 660, h: 880 };   // 照片区
+
+/* ---------------------------------------------------------------- 工具 --- */
+let _seed = 20260215 >>> 0;
+function rnd() { _seed = (Math.imul(_seed, 1664525) + 1013904223) >>> 0; return _seed / 4294967296; }
+function rr(a, b) { return a + rnd() * (b - a); }
+function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+function nf(v) { return Math.round(v * 1000) / 1000; }
+
+function el(tag, attrs, parent) {
+  const n = document.createElementNS(NS, tag);
+  if (attrs) for (const k in attrs) { const v = attrs[k]; if (v !== null && v !== undefined) n.setAttribute(k, v); }
+  if (parent) parent.appendChild(n);
+  return n;
+}
+function textNode(s, attrs, parent) { const n = el('text', attrs, parent); n.textContent = s; return n; }
+
+/* 墨卡托投影：u = lon（度），v = -mercY（度） */
+function mercY(lat) { return -Math.log(Math.tan(Math.PI / 4 + lat * D2R / 2)) / D2R; }
+function proj(lon, lat) { return [lon, mercY(lat)]; }
+
+/* ------------------------------------------------------------ DOM 骨架 --- */
+const board = document.getElementById('board');
+const stage = document.getElementById('stage');
+let defsEl = el('defs', null, board);
+
+let layerBoard, layerCard, layerMapClip, layerMapContent, layerPins, layerYarn, layerPhotos;
+
+/* ------------------------------------------------------------- 构建背景 --- */
+function buildBoard() {
+  const FELT_URI = "__FELT_URI__";
+
+  // 暗角（室内顶光：中间亮、四周暗，毛毡板最典型的光照）
+  const gVig = el('radialGradient', { id: 'vig', cx: '50%', cy: '42%', r: '76%' }, defsEl);
+  el('stop', { offset: '0%', 'stop-color': '#FFF8EC', 'stop-opacity': 0.16 }, gVig);
+  el('stop', { offset: '42%', 'stop-color': '#000', 'stop-opacity': 0 }, gVig);
+  el('stop', { offset: '100%', 'stop-color': '#3A2C1C', 'stop-opacity': 0.30 }, gVig);
+
+  // 颗粒
+  const fGrain = el('filter', { id: 'grain', x: 0, y: 0, width: '100%', height: '100%' }, defsEl);
+  el('feTurbulence', { type: 'fractalNoise', baseFrequency: '0.82', numOctaves: '3', stitchTiles: 'stitch' }, fGrain);
+  el('feColorMatrix', { type: 'saturate', values: '0' }, fGrain);
+
+  // 柔和阴影（拍立得用，屏幕像素单位）
+  const fShadow = el('filter', { id: 'softShadow', x: '-30%', y: '-30%', width: '170%', height: '170%' }, defsEl);
+  el('feGaussianBlur', { stdDeviation: '7' }, fShadow);
+
+  // 地图件投影（uv 单位，随缩放一起变 → 放大时影子也跟着变大）
+  const fMapShadow = el('filter', { id: 'mapShadow', x: '-20%', y: '-20%', width: '150%', height: '150%' }, defsEl);
+  el('feGaussianBlur', { stdDeviation: '0.62' }, fMapShadow);
+
+  layerBoard = el('g', { id: 'gBoard' }, board);
+  // 底色兜底 + 真实毛毡照片
+  el('rect', { x: 0, y: 0, width: BW, height: BH, fill: '#B9B1A6' }, layerBoard);
+  const fim = el('image', { x: 0, y: 0, width: BW, height: BH, preserveAspectRatio: 'xMidYMid slice', href: FELT_URI }, layerBoard);
+  fim.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', FELT_URI);
+  // 极淡暖色罩，统一色温
+  el('rect', { x: 0, y: 0, width: BW, height: BH, fill: '#8A7355', opacity: 0.05 }, layerBoard);
+
+  el('rect', { x: 0, y: 0, width: BW, height: BH, fill: 'url(#vig)' }, layerBoard);
+  el('rect', { x: 0, y: 0, width: BW, height: BH, filter: 'url(#grain)', opacity: 0.035 }, layerBoard);
+}
+
+/* ------------------------------------------------------------- 地图卡片 --- */
+let baseView = null;          // 中国全览基准变换
+let coreUV = null;            // 用于基准适配的 uv 范围
+let scsUV = null;             // 南海诸岛 inset 用的多边形
+const provUV = [];            // 每省投影后的多边形 + 包围盒
+
+function toUVPolys(polys) {
+  return polys.map(function (poly) {
+    return poly.map(function (ring) {
+      return ring.map(function (p) { return proj(p[0], p[1]); });
+    });
+  });
+}
+function uvBounds(uvPolys) {
+  let a = Infinity, b = -Infinity, c = Infinity, d = -Infinity;
+  for (let i = 0; i < uvPolys.length; i++)
+    for (let j = 0; j < uvPolys[i].length; j++) {
+      const r = uvPolys[i][j];
+      for (let k = 0; k < r.length; k++) {
+        const u = r[k][0], v = r[k][1];
+        if (u < a) a = u; if (u > b) b = u;
+        if (v < c) c = v; if (v > d) d = v;
+      }
+    }
+  return { u0: a, u1: b, v0: c, v1: d };
+}
+function fitTo(bounds, boxW, boxH, pad) {
+  const w = Math.max(bounds.u1 - bounds.u0, 1e-6);
+  const h = Math.max(bounds.v1 - bounds.v0, 1e-6);
+  const s = Math.min((boxW - pad * 2) / w, (boxH - pad * 2) / h);
+  return { s: s, tx: boxW / 2 - (bounds.u0 + bounds.u1) / 2 * s, ty: boxH / 2 - (bounds.v0 + bounds.v1) / 2 * s };
+}
+function ringPath(ring) {
+  let d = '';
+  for (let i = 0; i < ring.length; i++) {
+    d += (i ? 'L' : 'M') + nf(ring[i][0]) + ' ' + nf(ring[i][1]);
+  }
+  return d + 'Z';
+}
+function polysPath(uvPolys) {
+  let d = '';
+  for (let i = 0; i < uvPolys.length; i++)
+    for (let j = 0; j < uvPolys[i].length; j++) d += ringPath(uvPolys[i][j]);
+  return d;
+}
+
+function buildCard() {
+  layerCard = el('g', {
+    id: 'gCard',
+    transform: 'translate(' + CARD.cx + ' ' + CARD.cy + ') rotate(' + CARD.rot +
+               ') translate(' + (-CARD.w / 2) + ' ' + (-CARD.h / 2) + ')'
+  }, board);
+
+  // 投影后的几何
+  const chinaUV = toUVPolys(CHINA_POLYGONS);
+  const chinaBounds = uvBounds(chinaUV);
+
+  // 主体（用「最北纬度」区分：主图给大陆/海南/台湾/港澳，最南的小岛进 inset 小窗）
+  // 注意 v0 是最小 v = 最北，v1 是最大 v = 最南，别搞反
+  coreUV = chinaUV.filter(function (poly) { return mercLatOf(uvBounds([poly]).v0) > 17; });
+  scsUV = chinaUV.filter(function (poly) { return mercLatOf(uvBounds([poly]).v0) <= 21; });
+
+  // 省界
+  for (let i = 0; i < PROVINCES.length; i++) {
+    const uv = toUVPolys(PROVINCES[i].polys);
+    provUV.push({ name: PROVINCES[i].name, uv: uv, b: uvBounds(uv) });
+  }
+
+  // 地图件：一块切好的实心料，直接钉在毛毡上（无纸卡、无框线、无四角钉）
+  const landD = polysPath(coreUV);
+
+  // 地图内容整体受 view 变换 —— 缩放时地图、省界、省名一起动
+  layerMapContent = el('g', { id: 'mapContent' }, layerCard);
+
+  // 投影：右下偏移的柔和阴影 → 凸起感
+  el('path', { d: landD, fill: '#241A0E', opacity: 0.50,
+               filter: 'url(#mapShadow)', transform: 'translate(0.72 1.05)' }, layerMapContent);
+  // 左上受光的切边（比主体高一线）
+  el('path', { d: landD, fill: '#FCF0CE', transform: 'translate(-0.17 -0.17)' }, layerMapContent);
+  // 主体
+  el('path', { d: landD, fill: '#E9CE87', 'fill-rule': 'nonzero' }, layerMapContent);
+
+  // 省界
+  let pd = '';
+  for (let i = 0; i < provUV.length; i++) pd += polysPath(provUV[i].uv);
+  el('path', { d: pd, fill: 'none', stroke: '#C6A65C', 'stroke-width': 1.0, 'stroke-linejoin': 'round',
+               opacity: 0.85, 'vector-effect': 'non-scaling-stroke' }, layerMapContent);
+  // 国界
+  el('path', { d: landD, fill: 'none', stroke: '#A07C33', 'stroke-width': 2.0,
+               'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+               'vector-effect': 'non-scaling-stroke', opacity: 0.95 }, layerMapContent);
+
+  // 针的图层（卡片内，不随地图缩放）
+  layerPins = el('g', { id: 'mapPins' }, layerCard);
+
+}
+
+/* 省名：只给放得下的省画，字随缩放一起变大（像印在这块料上） */
+function buildProvinceLabels() {
+  const fs0 = 10.6 / baseView.s;         // 基准字号（uv 单位）≈ 10.6px
+  for (let i = 0; i < PROVINCES.length; i++) {
+    const pr = PROVINCES[i];
+    if (!pr.label || !pr.name) continue;
+    if (!(pr.r >= 0.60)) continue;        // 太小放不下（京/津/沪/港/澳）
+    const uv = proj(pr.label[0], pr.label[1]);
+    const name = shortProv(pr.name);
+    // 2~3 个字要能塞进内切圆：字宽 ≈ 字高，故限制总宽 ≤ 1.7r
+    const byWidth = (1.7 * pr.r) / Math.max(1, name.length);
+    const fs = Math.min(fs0, byWidth);
+    if (fs < fs0 * 0.46) continue;
+    textNode(name, {
+      x: nf(uv[0]), y: nf(uv[1] + fs * 0.36), 'text-anchor': 'middle',
+      'font-size': nf(fs), 'font-family': "'PingFang SC','Microsoft YaHei',sans-serif",
+      fill: '#7C5D1D', opacity: 0.9, 'letter-spacing': nf(fs * 0.05)
+    }, layerMapContent);
+  }
+}
+
+function mercLatOf(v) { return Math.atan(Math.sinh(-v * D2R)) / D2R; }
+
+
+/* 卡片局部 → 画布坐标（考虑 -1.2° 旋转） */
+function cardToBoard(x, y) {
+  const a = CARD.rot * D2R, c = Math.cos(a), s = Math.sin(a);
+  const dx = x - CARD.w / 2, dy = y - CARD.h / 2;
+  return [CARD.cx + dx * c - dy * s, CARD.cy + dx * s + dy * c];
+}
+function boardToCard(x, y) {
+  const a = CARD.rot * D2R, c = Math.cos(a), s = Math.sin(a);
+  const dx = x - CARD.cx, dy = y - CARD.cy;
+  return [dx * c + dy * s + CARD.w / 2, -dx * s + dy * c + CARD.h / 2];
+}
+
+/* --------------------------------------------------------------- 状态 --- */
+/* 示例照片（构建时内嵌：5 张真实照片的 data URI + 真实 GPS 经纬度） */
+const DEMO_DATA = /*__DEMO_DATA__*/[];
+let photos = [];          // {uid,url,w,h,lon,lat,city,demo}
+let uidSeq = 1;
+let selectedUid = 0;
+
+let view = { s: 1, tx: 0, ty: 0 };     // 地图内容变换
+let tweenToken = null;
+
+const MIN_LON = 73.0, MAX_LON = 136.0, MIN_LAT = 16.2, MAX_LAT = 54.0;
+
+/* --------------------------------------------------------- 地图变换应用 --- */
+function applyView() {
+  layerMapContent.setAttribute('transform',
+    'translate(' + nf(view.tx) + ' ' + nf(view.ty) + ') scale(' + view.s + ')');
+  syncPins();
+  drawYarn();
+}
+
+function uvOf(city) { const c = CITY_INDEX[city]; return c ? proj(c.lon, c.lat) : null; }
+
+/* 世界 uv → 卡片局部坐标 */
+function uvToCard(u, v) { return [u * view.s + view.tx, v * view.s + view.ty]; }
+
+/* ------------------------------------------------------------- 大头针 --- */
+let pinNodes = new Map();   // uid -> <g>
+
+/* 地图上针的位置（卡片局部坐标）。
+   相距过近的针（同一地点连拍、广州↔深圳这种）沿水平错开，免得钉成一个点。
+   ★ 画针、画线、排布、自检四个消费方必须都读 p._pinCard，
+     否则「排布按 A 点算、自检按 B 点算」就会出现永远消不掉的交叉。 */
+const PIN_GAP = 15;
+function computePinCard() {
+  const placed = [];
+  for (let i = 0; i < photos.length; i++) {
+    const p = photos[i];
+    const uv = proj(p.lon, p.lat);
+    const x0 = uv[0] * view.s + view.tx, y0 = uv[1] * view.s + view.ty;
+    let x = x0;
+    for (let k = 1; k <= 12; k++) {
+      let hit = false;
+      for (let j = 0; j < placed.length; j++) {
+        if (Math.abs(placed[j][0] - x) < PIN_GAP && Math.abs(placed[j][1] - y0) < PIN_GAP) { hit = true; break; }
+      }
+      if (!hit) break;
+      const step = Math.ceil(k / 2) * PIN_GAP;
+      x = x0 + (k % 2 ? step : -step);
+    }
+    placed.push([x, y0]);
+    p._pinCard = [x, y0];
+  }
+}
+
+function syncPins() {
+  // 清掉多余的
+  pinNodes.forEach(function (g, uid) {
+    if (!photos.some(function (p) { return p.uid === uid; })) { g.remove(); pinNodes.delete(uid); }
+  });
+  computePinCard();
+
+  for (let i = 0; i < photos.length; i++) {
+    const p = photos[i];
+    let g = pinNodes.get(p.uid);
+    if (!g) {
+      g = el('g', { class: 'pin', 'data-uid': p.uid }, layerPins);
+      el('ellipse', { cx: 1.5, cy: 4.5, rx: 6.5, ry: 3.2, fill: '#2A1B12', opacity: 0.28 }, g);
+      el('circle', { r: PIN_R, fill: '#C0392B', stroke: '#8E2B22', 'stroke-width': 1.1 }, g);
+      el('circle', { cx: -2, cy: -2.2, r: 2.3, fill: '#E8756A', opacity: 0.9 }, g);
+      el('circle', { cx: 0, cy: 0, r: 1.9, fill: '#7C1F16', opacity: 0.55 }, g);
+      g.addEventListener('pointerdown', onPinDown);
+      g.addEventListener('pointerenter', function () { highlight(+g.getAttribute('data-uid'), true); });
+      g.addEventListener('pointerleave', function () { highlight(+g.getAttribute('data-uid'), false); });
+      pinNodes.set(p.uid, g);
+    }
+    const c = p._pinCard;
+    g.setAttribute('transform', 'translate(' + nf(c[0]) + ' ' + nf(c[1]) + ')');
+  }
+}
+
+function highlight(uid, on) {
+  const el2 = photoNodes.get(uid);
+  if (el2) el2.style.filter = on ? 'brightness(1.06) drop-shadow(0 0 6px rgba(192,57,43,.5))' : '';
+  const y = yarnNodes.get(uid);
+  if (y) y.setAttribute('stroke-width', on ? 4.2 : 3.1);
+}
+
+/* --------------------------------------------------------------- 红线 --- */
+let layerYarnInner;
+const yarnNodes = new Map();
+const yarnParts = new Map();
+
+function yarnD(p) {
+  const from = cardToBoard(p._pinCard[0], p._pinCard[1]);
+  const to = p._pinBoard;
+  if (!to) return null;
+  return {
+    from: from, to: to,
+    d: 'M' + nf(from[0]) + ' ' + nf(from[1]) + 'L' + nf(to[0]) + ' ' + nf(to[1])
+  };
+}
+
+function drawYarn() {
+  layerYarnInner.textContent = '';
+  yarnNodes.clear();
+  yarnParts.clear();
+  computePinCard();
+  for (let i = 0; i < photos.length; i++) {
+    const p = photos[i];
+    const y = yarnD(p);
+    if (!y) continue;
+
+    // 毛线绷直 —— 与 yarnPath() 必须是同一条几何，否则「按 A 排布、按 B 验收」
+    const g = el('g', { opacity: 0.95 }, layerYarnInner);
+    const main = el('path', { d: y.d, fill: 'none', stroke: '#B03A2E', 'stroke-width': 3.1,
+                              'stroke-linecap': 'round' }, g);
+    const hi = el('path', { d: y.d, fill: 'none', stroke: '#D9534F', 'stroke-width': 1.1,
+                 'stroke-linecap': 'round', opacity: 0.4 }, g);
+    // 两端线结
+    const k1 = el('circle', { cx: nf(y.from[0]), cy: nf(y.from[1]), r: 3, fill: '#8E2B22' }, g);
+    const k2 = el('circle', { cx: nf(y.to[0]), cy: nf(y.to[1]), r: 2.6, fill: '#8E2B22' }, g);
+    yarnNodes.set(p.uid, main);
+    yarnParts.set(p.uid, { main: main, hi: hi, k1: k1, k2: k2 });
+  }
+}
+
+/* 单张照片的线就地更新（拖动时用，避免整层重建） */
+function updateYarnFor(p) {
+  const y = yarnD(p);
+  const q = yarnParts.get(p.uid);
+  if (!y || !q) return;
+  q.main.setAttribute('d', y.d);
+  q.hi.setAttribute('d', y.d);
+  q.k1.setAttribute('cx', nf(y.from[0])); q.k1.setAttribute('cy', nf(y.from[1]));
+  q.k2.setAttribute('cx', nf(y.to[0])); q.k2.setAttribute('cy', nf(y.to[1]));
+}
+
+/* --------------------------------------------------------------- 照片 --- */
+const photoNodes = new Map();
+const photoClips = [];
+let layoutInfo = null;
+
+function buildPhotosLayer() {
+  // 先照片后红线 → 毛线压在照片上面（用户要的观感：线是搭在照片上的）
+  layerPhotos = el('g', { id: 'gPhotos' }, board);
+  layerYarn = el('g', { id: 'gYarn' }, board);
+  layerYarnInner = el('g', null, layerYarn);
+}
+
+function polDims(p, contentW) {
+  const small = contentW < 140;
+  const pad = small ? 8 : 12;
+  const bot = small ? 26 : 46;
+  const ratio = p.h / p.w;
+  const contentH = clamp(Math.round(contentW * ratio), Math.round(contentW * 0.72), Math.round(contentW * 1.15));
+  return { cw: contentW, ch: contentH, pw: contentW + pad * 2, ph: contentH + pad + bot,
+           pad: pad, bot: bot, small: small };
+}
+
+/* ------------------------------------------------------- 照片排布 ---------
+   照片绕地图卡一圈：上/右/下/左四条走廊，走廊内是统一尺寸的槽位网格。
+   红线互不交叉靠三点保证：
+     ① 槽位与照片都按「绕卡片中心的方位角」排序，DP 求单调最小角距指派；
+     ② 2-opt：交换任一对相交的红线，总长必下降 → 有限步终止，不会死循环；
+     ③ 照片的针钉在槽位锚点上（锚点只跟槽位有关，与照片无关 → ② 端点固定，收敛）；
+/* 走廊与槽位共用的间距常量。
+        M  = 画布外边距（尽量小，否则上下走廊高度不够，塞不进最高的照片 → 上下两排会空着）
+        m  = 走廊与地图件之间的间隙
+        gap= 槽位之间的间隙
+        ayOff = 槽位顶边到照片自身图钉的距离
+        槽位按最大外接框取尺寸 → 任意照片放任意槽位都不重叠、不出界。      */
+const CORR = { M: 10, m: 10, gap: 12, ayOff: 12 };
+
+/* 四条走廊：左右吃满画布高度，上下夹在两者之间（四角归左右，互不重叠） */
+function corridors() {
+  const M = CORR.M, m = CORR.m;
+  return [
+    { x0: CARD.x - m,          y0: M, x1: CARD.x + CARD.w + m,          y1: CARD.y - m },
+    { x0: CARD.x + CARD.w + m, y0: M, x1: BW - M,                     y1: 1000 - M },
+    { x0: CARD.x - m,          y0: CARD.y + CARD.h + m, x1: CARD.x + CARD.w + m, y1: 1000 - M },
+    { x0: M,                   y0: M, x1: CARD.x - m,                    y1: 1000 - M }
+  ];
+}
+
+/* 槽位网格（统一尺寸），按绕卡片中心的方位角升序返回 */
+function corridorSlots(sw, sh) {
+  const gap = CORR.gap, out = [];
+  corridors().forEach(function (g) {
+    const w = g.x1 - g.x0, h = g.y1 - g.y0;
+    const cols = Math.floor((w + gap) / (sw + gap));
+    const rows = Math.floor((h + gap) / (sh + gap));
+    if (cols < 1 || rows < 1) return;
+    const ox = (w - (cols * sw + (cols - 1) * gap)) / 2;
+    const oy = (h - (rows * sh + (rows - 1) * gap)) / 2;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const x = g.x0 + ox + c * (sw + gap), y = g.y0 + oy + r * (sh + gap);
+      out.push({ x: x, y: y, w: sw, h: sh, ax: x + sw / 2, ay: y + CORR.ayOff });
+    }
+  });
+  out.forEach(function (s) { s.ang = ringAng(s.ax, s.ay); });
+  out.sort(function (a, b) { return a.ang - b.ang; });
+  return out;
+}
+
+function angDist(a, b) { const t = Math.abs(a - b) % 360; return t > 180 ? 360 - t : t; }
+
+/* 红线的实际形状：两点之间拉直（毛线绷紧就是直线）。排布与自检都用它。 */
+function yarnPath(from, to) {
+  const pts = [];
+  for (let k = 0; k <= 16; k++) {
+    const t = k / 16;
+    pts.push([from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t]);
+  }
+  return pts;
+}
+
+/* 两线段是否真相交（端点附近 0.2% 内不算，避免共点误判） */
+function segCross(p1, p2, p3, p4) {
+  const d1x = p2[0] - p1[0], d1y = p2[1] - p1[1], d2x = p4[0] - p3[0], d2y = p4[1] - p3[1];
+  const den = d1x * d2y - d1y * d2x;
+  if (Math.abs(den) < 1e-9) return false;
+  const t = ((p3[0] - p1[0]) * d2y - (p3[1] - p1[1]) * d2x) / den;
+  const u = ((p3[0] - p1[0]) * d1y - (p3[1] - p1[1]) * d1x) / den;
+  return t > 0.002 && t < 0.998 && u > 0.002 && u < 0.998;
+}
+
+function ringAng(x, y) { return (Math.atan2(x - CARD.cx, -(y - CARD.cy)) / D2R + 360) % 360; }
+
+let ringLen = 0;   // 供 __dbg 观测：当前档位下可用槽位数
+
+/* 排布主入口：返回 {fits, cells: Map(uid→{cx,cy,ax,ay,d})}。
+   ax/ay 是照片自己的针（锚点），cx/cy 是照片中心。 */
+function ringLayout(items, contentW, gap) {
+  void gap;
+  const a = ROT_MAX * D2R, ca = Math.cos(a), sa = Math.sin(a);
+  computePinCard();                      // 与画针/画线共用同一份针位
+  const info = items.map(function (p) {
+    const d = polDims(p, contentW);
+    return { p: p, d: d,
+             bw: d.pw * ca + d.ph * sa,      // ±4° 旋转后的外接宽
+             bh: d.pw * sa + d.ph * ca,      // ±4° 旋转后的外接高
+             pin: cardToBoard(p._pinCard[0], p._pinCard[1]) }; // 图钉在画布坐标
+  });
+
+  // 统一槽位尺寸 = 最大外接框 → 任意照片放进任意槽位都不会重叠、不会出界
+  let bwMax = 0, bhMax = 0;
+  info.forEach(function (q) { bwMax = Math.max(bwMax, q.bw); bhMax = Math.max(bhMax, q.bh); });
+  const sw = Math.ceil(bwMax) + 2, sh = Math.ceil(bhMax) + 2;
+  const slots = corridorSlots(sw, sh);
+  ringLen = slots.length;
+  if (slots.length < info.length) return { fits: false, cells: new Map() };
+
+  info.forEach(function (q) { q.ang = ringAng(q.pin[0], q.pin[1]); });
+  const work = info.slice().sort(function (m2, n2) { return m2.ang - n2.ang; });
+
+  /* ① DP：从 n 个有序槽位中选 m 个、按序指派给有序照片，最小化总角距（O(n·m)）。
+     槽位与照片都按方位角升序 → 指派天然保序 → 红线扇形展开、互不打结。 */
+  const n = slots.length, m = work.length, INF = 1e18;
+  const dp = [], from = [];
+  for (let i = 0; i <= n; i++) {
+    dp.push(new Array(m + 1).fill(INF));
+    from.push(new Array(m + 1).fill(-1));
+  }
+  dp[0][0] = 0;
+  for (let i = 1; i <= n; i++) for (let j = 0; j <= m; j++) {
+    dp[i][j] = dp[i - 1][j]; from[i][j] = j;                  // 跳过第 i 个槽位
+    if (j > 0 && dp[i - 1][j - 1] < INF) {
+      const v = dp[i - 1][j - 1] + angDist(slots[i - 1].ang, work[j - 1].ang);
+      if (v < dp[i][j]) { dp[i][j] = v; from[i][j] = j - 1; }  // 用第 i 个槽位
+    }
+  }
+  const pick = new Array(m);
+  for (let i = n, j = m; i > 0 && j >= 0; i--) {
+    if (from[i][j] === j - 1) { pick[j - 1] = slots[i - 1]; j--; }
+  }
+  for (let i = 0; i < m; i++) if (!pick[i]) return { fits: false, cells: new Map() };
+
+  /* ② 2-opt：主目标 = 总交叉数，次目标 = 总线长。
+     只接受「交叉数不增」的交换；同交叉数时要求线长下降 → 单调有界，有限步终止。 */
+  const segLen = function (a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1]); };
+  const pathLen = function (pts) {
+    let L = 0;
+    for (let k = 0; k < pts.length - 1; k++) L += segLen(pts[k], pts[k + 1]);
+    return L;
+  };
+  const crossP = function (A, B) {
+    for (let x = 0; x < A.length - 1; x++) for (let y = 0; y < B.length - 1; y++)
+      if (segCross(A[x], A[x + 1], B[y], B[y + 1])) return true;
+    return false;
+  };
+  // 每条线当前的贝塞尔折线（含下垂）；交换 i/j 后只需重算这两条
+  const chain = pick.map(function (s, i) { return yarnPath(work[i].pin, [s.ax, s.ay]); });
+  const chainLen = chain.map(pathLen);
+  const totalX = function () {
+    let c = 0;
+    for (let a = 0; a < m; a++) for (let b = a + 1; b < m; b++) if (crossP(chain[a], chain[b])) c++;
+    return c;
+  };
+  let curX = totalX();
+  let curL = chainLen.reduce(function (a, b) { return a + b; }, 0);
+
+  for (let pass = 0; pass < 400 && curX > 0; pass++) {
+    let best = null;
+    for (let i = 0; i < m; i++) for (let j = i + 1; j < m; j++) {
+      const Ai = yarnPath(work[i].pin, [pick[j].ax, pick[j].ay]);
+      const Aj = yarnPath(work[j].pin, [pick[i].ax, pick[i].ay]);
+      const oi = chain[i], oj = chain[j];
+      chain[i] = Ai; chain[j] = Aj;
+      const x2 = totalX();
+      const L2 = curL - chainLen[i] - chainLen[j] + pathLen(Ai) + pathLen(Aj);
+      chain[i] = oi; chain[j] = oj;
+      if (x2 > curX) continue;                       // 交叉变多：一律拒绝
+      if (x2 === curX && L2 >= curL - 1e-9) continue; // 同交叉数：只接受更短
+      if (!best || x2 < best.x || (x2 === best.x && L2 < best.L)) best = { i: i, j: j, x: x2, L: L2 };
+    }
+    if (!best) break;
+    const i = best.i, j = best.j;
+    const Ai = yarnPath(work[i].pin, [pick[j].ax, pick[j].ay]);
+    const Aj = yarnPath(work[j].pin, [pick[i].ax, pick[i].ay]);
+    chain[i] = Ai; chain[j] = Aj;
+    chainLen[i] = pathLen(Ai); chainLen[j] = pathLen(Aj);
+    const t = pick[i]; pick[i] = pick[j]; pick[j] = t;
+    curX = best.x; curL = best.L;
+  }
+  void segLen;
+
+  // ③ 输出：针固定在槽位锚点上，照片中心由锚点 + 旋转反解出来
+  const cells = new Map();
+  for (let i = 0; i < m; i++) {
+    const s = pick[i], q = work[i], d = q.d;
+    const rot = angOf(q.p.uid);
+    const rad = rot * D2R;
+    const lx = 0, ly = PIN_Y - d.ph / 2;            // 针相对照片中心的偏移
+    cells.set(q.p.uid, {
+      cx: s.ax - (lx * Math.cos(rad) - ly * Math.sin(rad)),
+      cy: s.ay - (lx * Math.sin(rad) + ly * Math.cos(rad)),
+      ax: s.ax, ay: s.ay, rot: rot, d: d
+    });
+  }
+  return { fits: true, cells: cells, x: curX };
+}
+
+/* 每张照片的旋转角：uid 派生、稳定不变（刷新/重排后仍是同一个角度） */
+const PIN_Y = 9;
+function angOf(uid) { return ((uid * 2654435761) % 1000 / 1000 * 2 - 1) * ROT_MAX; }
+
+
+function renderPhotos() {
+  layerYarnInner.textContent = '';
+  photoNodes.clear();
+  layerPhotos.textContent = '';
+  yarnNodes.clear();
+  // 清掉上一轮的照片裁剪路径，避免同 id 残留
+  photoClips.forEach(function (n) { n.remove(); });
+  photoClips.length = 0;
+
+  if (!photos.length) { layoutInfo = null; return; }
+
+  // 找合适的内容宽（环形排布放不下就逐级缩小）
+  let contentW = 200, lay = null;
+  const tryList = [200, 190, 180, 170, 160, 150, 140, 130, 120, 110, 100, 92, 84, 76, 68, 60];
+  for (let i = 0; i < tryList.length; i++) {
+    contentW = tryList[i];
+    lay = ringLayout(photos, contentW, contentW < 140 ? 8 : 14);
+    if (lay.fits) break;
+  }
+  layoutInfo = lay;
+
+  for (let i = 0; i < photos.length; i++) {
+    const p = photos[i];
+    const cell = lay.cells.get(p.uid);
+    const d = cell.d;
+
+    // 针固定在槽位锚点上（布局算好的），旋转角由 uid 派生 → 稳定不变
+    const rot = cell.rot;
+    // 用户手动拖过就沿用拖动后的位置（窗口变小后夹回画布内）
+    let cx = cell.cx, cy = cell.cy;
+    if (p.pos) {
+      const hw = (d.pw + d.ph) / 3;
+      cx = clamp(p.pos[0], hw, BW - hw);
+      cy = clamp(p.pos[1], hw, BH - hw);
+      if (cx !== p.pos[0] || cy !== p.pos[1]) p.pos = [cx, cy];
+    }
+    p._cx = cx; p._cy = cy; p._rot = rot; p._dims = d;
+
+    const g = el('g', {
+      class: 'polaroid',
+      'data-uid': p.uid,
+      transform: 'translate(' + nf(cx) + ' ' + nf(cy) + ') rotate(' + rot.toFixed(2) +
+                 ') translate(' + (-d.pw / 2) + ' ' + (-d.ph / 2) + ')'
+    }, layerPhotos);
+
+    // 阴影
+    el('rect', { x: 2, y: 5, width: d.pw, height: d.ph, fill: '#000', opacity: 0.30,
+                 filter: 'url(#softShadow)', rx: 1.5 }, g);
+    // 相纸
+    el('rect', { x: 0, y: 0, width: d.pw, height: d.ph, fill: '#FCF8F1', rx: 1.5 }, g);
+    el('rect', { x: 0, y: 0, width: d.pw, height: d.ph, fill: 'none',
+                 stroke: '#D9CFBE', 'stroke-width': 0.7, rx: 1.5 }, g);
+
+    // 内容
+    const clipId = 'ph' + p.uid;
+    const cp = el('clipPath', { id: clipId }, defsEl);
+    photoClips.push(cp);
+    el('rect', { x: d.pad, y: d.pad, width: d.cw, height: d.ch }, cp);
+
+    {
+      const im = el('image', { x: d.pad, y: d.pad, width: d.cw, height: d.ch, href: p.url,
+                    preserveAspectRatio: 'xMidYMid slice', 'clip-path': 'url(#' + clipId + ')' }, g);
+      im.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', p.url);
+    }
+
+    // 地点手写标签
+    textNode(p.city, {
+      x: d.pw / 2, y: d.pad + d.ch + (d.small ? 17 : 29), 'text-anchor': 'middle',
+      'font-size': d.small ? 11 : 15.5,
+      'font-family': "'Segoe Script','Bradley Hand','Xingkai SC','KaiTi','STKaiti',cursive",
+      fill: '#3D342B', opacity: 0.88, 'letter-spacing': 0.6
+    }, g);
+
+    // 照片自己的针（顶边中点）
+    const localPinX = d.pw / 2, localPinY = 9;
+    const a2 = rot * D2R, c2 = Math.cos(a2), s2 = Math.sin(a2);
+    const lx = localPinX - d.pw / 2, ly = localPinY - d.ph / 2;
+    p._pinBoard = [cx + lx * c2 - ly * s2, cy + lx * s2 + ly * c2];
+
+    const pg = el('g', { transform: 'translate(' + localPinX + ' ' + localPinY + ')' }, g);
+    el('ellipse', { cx: 1.5, cy: 4.5, rx: 6.5, ry: 3.2, fill: '#2A1B12', opacity: 0.3 }, pg);
+    el('circle', { r: PIN_R, fill: '#C0392B', stroke: '#8E2B22', 'stroke-width': 1.1 }, pg);
+    el('circle', { cx: -2, cy: -2.2, r: 2.3, fill: '#E8756A', opacity: 0.9 }, pg);
+    el('circle', { cx: 0, cy: 0, r: 1.9, fill: '#7C1F16', opacity: 0.55 }, pg);
+
+    g.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      if (p._skipClick) { p._skipClick = false; return; }   // 刚拖过，别当点击
+      openViewer(p.uid);
+    });
+    g.addEventListener('pointerdown', function (ev) { onPhotoDown(ev, p); });
+    g.addEventListener('pointermove', onPhotoMove);
+    g.addEventListener('pointerup', onPhotoUp);
+    g.addEventListener('pointercancel', onPhotoUp);
+
+    photoNodes.set(p.uid, g);
+  }
+
+  applyView();
+}
+
+/* ------------------------------------------------------------ 自动全览 --- */
+function clampView(t) { return { s: clamp(t.s, baseView.s * 0.8, baseView.s * 11), tx: t.tx, ty: t.ty }; }
+
+/* 打卡点外接框对应的目标视图（只算不改） */
+function fitPinsTarget() {
+  if (!photos.length) return null;
+  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+  for (let i = 0; i < photos.length; i++) {
+    const uv = proj(photos[i].lon, photos[i].lat);
+    if (uv[0] < u0) u0 = uv[0]; if (uv[0] > u1) u1 = uv[0];
+    if (uv[1] < v0) v0 = uv[1]; if (uv[1] > v1) v1 = uv[1];
+  }
+  // 单点 / 极近的点：撑开到区域级视野
+  const minSpan = photos.length === 1 ? 22 : 11;
+  const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2;
+  const spanU = Math.max(u1 - u0, minSpan);
+  const spanV = Math.max(v1 - v0, minSpan * 0.72);
+  const b = { u0: cu - spanU / 2, u1: cu + spanU / 2, v0: cv - spanV / 2, v1: cv + spanV / 2 };
+  return clampView(fitTo(b, CARD.w, CARD.h, 88));
+}
+
+/* 先按终态视图重排红线（零交叉只针对终态成立），再补间过去 */
+function flyTo(target, animated) {
+  if (!target) return;
+  const prev = { s: view.s, tx: view.tx, ty: view.ty };
+  view = { s: target.s, tx: target.tx, ty: target.ty };
+  renderPhotos();
+  const t = { s: view.s, tx: view.tx, ty: view.ty };
+  view = prev;
+  setView(t, animated);
+}
+
+function fitToPins(animated) { flyTo(fitPinsTarget(), animated); }
+
+/* 没有真实照片时（示例状态）默认回到中国全览，上传后才聚焦到自己的打卡点 */
+function resetView(animated) {
+  if (!photos.length || photos.every(function (p) { return p.demo; })) setView(baseView, animated);
+  else fitToPins(animated);
+}
+
+function setView(target, animated) {  const s = clamp(target.s, baseView.s * 0.8, baseView.s * 11);
+  const t = { s: s, tx: target.tx, ty: target.ty };
+  if (!animated) {
+    if (tweenToken) { cancelAnimationFrame(tweenToken); tweenToken = null; }
+    view = t; applyView(); return;
+  }
+  const from = { s: view.s, tx: view.tx, ty: view.ty };
+  const t0 = performance.now(), dur = 560;
+  if (tweenToken) cancelAnimationFrame(tweenToken);
+  (function step() {
+    const k = Math.min(1, (performance.now() - t0) / dur);
+    const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+    view.s = from.s + (t.s - from.s) * e;
+    view.tx = from.tx + (t.tx - from.tx) * e;
+    view.ty = from.ty + (t.ty - from.ty) * e;
+    applyView();
+    tweenToken = k < 1 ? requestAnimationFrame(step) : null;
+  })();
+}
+
+/* --------------------------------------------------------- 交互：指针 --- */
+function clientToBoard(ev) {
+  const m = board.getScreenCTM();
+  if (!m) return [0, 0];
+  const pt = new DOMPoint(ev.clientX, ev.clientY).matrixTransform(m.inverse());
+  return [pt.x, pt.y];
+}
+
+let dragPin = null;
+
+function onPinDown(ev) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  const uid = +ev.currentTarget.getAttribute('data-uid');
+  dragPin = { uid: uid };
+  hidePopover();
+  ev.currentTarget.setPointerCapture && ev.currentTarget.setPointerCapture(ev.pointerId);
+  board.addEventListener('pointermove', onPinMove);
+  board.addEventListener('pointerup', onPinUp);
+  board.addEventListener('pointercancel', onPinUp);
+}
+
+function onPinMove(ev) {
+  if (!dragPin) return;
+  const p = photos.find(function (q) { return q.uid === dragPin.uid; });
+  if (!p) return;
+  const b = clientToBoard(ev);
+  const c = boardToCard(b[0], b[1]);
+  const u = (c[0] - view.tx) / view.s;
+  const v = (c[1] - view.ty) / view.s;
+  const lat = clamp(Math.atan(Math.sinh(-v * D2R)) / D2R, MIN_LAT, MAX_LAT);
+  const lon = clamp(u, MIN_LON, MAX_LON);
+  if (Math.abs(lat - p.lat) < 1e-6 && Math.abs(lon - p.lon) < 1e-6) return;
+  p.lon = lon; p.lat = lat; p.locked = true;
+  syncPins();
+  drawYarn();
+  syncFocusSelect();
+}
+
+function onPinUp() {
+  dragPin = null;
+  board.removeEventListener('pointermove', onPinMove);
+  board.removeEventListener('pointerup', onPinUp);
+  board.removeEventListener('pointercancel', onPinUp);
+}
+
+/* --------------------------------------------------------- 拖动照片 --- */
+/* 照片默认按走廊排布自动定位；一旦用户拖过，就记住 p.pos（画布坐标），
+   之后重排（改窗口大小）也沿用这个位置，红线跟着走。 */
+let dragPhoto = null;
+
+function photoTransform(p, cx, cy) {
+  const d = p._dims;
+  return 'translate(' + nf(cx) + ' ' + nf(cy) + ') rotate(' + p._rot.toFixed(2) +
+         ') translate(' + (-d.pw / 2) + ' ' + (-d.ph / 2) + ')';
+}
+
+function onPhotoDown(ev, p) {
+  if (ev.button !== 0) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const ctm = layerPhotos.getScreenCTM();
+  if (!ctm) return;
+  const inv = ctm.inverse();
+  const pt = new DOMPoint(ev.clientX, ev.clientY).matrixTransform(inv);
+  dragPhoto = { p: p, x0: pt.x, y0: pt.y, cx0: p._cx, cy0: p._cy, moved: false, el: ev.currentTarget };
+  p._skipClick = false;
+  ev.currentTarget.classList.add('dragging');
+  ev.currentTarget.setPointerCapture && ev.currentTarget.setPointerCapture(ev.pointerId);
+}
+
+function onPhotoMove(ev) {
+  if (!dragPhoto) return;
+  const el0 = dragPhoto.el;
+  const ctm = layerPhotos.getScreenCTM();
+  if (!ctm) return;
+  const pt = new DOMPoint(ev.clientX, ev.clientY).matrixTransform(ctm.inverse());
+  let nx = dragPhoto.cx0 + (pt.x - dragPhoto.x0);
+  let ny = dragPhoto.cy0 + (pt.y - dragPhoto.y0);
+  if (!dragPhoto.moved) {
+    if (Math.abs(pt.x - dragPhoto.x0) < 2 && Math.abs(pt.y - dragPhoto.y0) < 2) return;
+    dragPhoto.moved = true;
+  }
+  const p = dragPhoto.p, d = p._dims;
+  // 出画布就夹住（留半个拍立得的余量）
+  const hw = (d.pw + d.ph) / 3, hh = hw;
+  nx = clamp(nx, hw, BW - hw);
+  ny = clamp(ny, hh, BH - hh);
+  p._cx = nx; p._cy = ny;
+  el0.setAttribute('transform', photoTransform(p, nx, ny));
+  // 照片自己的针跟着照片走 → 重算后只更新这一条线
+  const a2 = p._rot * D2R, c2 = Math.cos(a2), s2 = Math.sin(a2);
+  const lx = 0, ly = 9 - d.ph / 2;
+  p._pinBoard = [nx + lx * c2 - ly * s2, ny + lx * s2 + ly * c2];
+  updateYarnFor(p);
+}
+
+function onPhotoUp(ev) {
+  if (!dragPhoto) return;
+  const p = dragPhoto.p;
+  if (dragPhoto.moved) {
+    p.pos = [p._cx, p._cy];
+    p._skipClick = true;
+    syncPopReset();
+  }
+  dragPhoto.el.classList.remove('dragging');
+  dragPhoto = null;
+}
+
+/* 地图平移 + 滚轮缩放 */
+let panState = null;
+function bindMapInteractions() {
+  let surface = el('rect', {
+    id: 'mapSurface', x: 0, y: 0, width: CARD.w, height: CARD.h,
+    fill: 'transparent'
+  }, layerCard);
+  // 挪到大头针下面：能接住空白处的拖拽/滚轮，又不挡住针
+  layerCard.insertBefore(surface, layerPins);
+
+  surface.addEventListener('pointerdown', function (ev) {
+    if (ev.button !== 0) return;
+    hidePopover();
+    const b = clientToBoard(ev);
+    panState = { x: b[0], y: b[1], tx: view.tx, ty: view.ty };
+    surface.classList.add('panning');
+    surface.setPointerCapture && surface.setPointerCapture(ev.pointerId);
+    surface.addEventListener('pointermove', onPanMove);
+    surface.addEventListener('pointerup', onPanUp);
+    surface.addEventListener('pointercancel', onPanUp);
+  });
+
+  surface.addEventListener('wheel', function (ev) {
+    ev.preventDefault();
+    const b = clientToBoard(ev);
+    const c = boardToCard(b[0], b[1]);
+    const f = Math.exp(-ev.deltaY * 0.0016);
+    zoomAt(c[0], c[1], f);
+  }, { passive: false });
+
+  surface.addEventListener('dblclick', function () { resetView(true); });
+}
+
+function onPanMove(ev) {
+  if (!panState) return;
+  const b = clientToBoard(ev);
+  view.tx = panState.tx + (b[0] - panState.x);
+  view.ty = panState.ty + (b[1] - panState.y);
+  applyView();
+}
+function onPanUp(ev) {
+  panState = null;
+  const s = ev.currentTarget;
+  if (s) { s.classList.remove('panning'); s.removeEventListener('pointermove', onPanMove);
+           s.removeEventListener('pointerup', onPanUp); s.removeEventListener('pointercancel', onPanUp); }
+}
+
+function zoomAt(px, py, factor) {
+  const s0 = view.s;
+  const s1 = clamp(s0 * factor, baseView.s * 0.8, baseView.s * 11);
+  if (Math.abs(s1 - s0) < 1e-9) return;
+  const k = s1 / s0;
+  view.tx = px - (px - view.tx) * k;
+  view.ty = py - (py - view.ty) * k;
+  view.s = s1;
+  if (tweenToken) { cancelAnimationFrame(tweenToken); tweenToken = null; }
+  applyView();
+}
+
+/* --------------------------------------------------------- 照片预览 --- */
+const viewer = document.getElementById('viewer');
+const viewerImg = document.getElementById('viewerImg');
+const popCity = document.getElementById('popCity');
+CITIES.forEach(function (c) {
+  const o = document.createElement('option'); o.value = c[0]; o.textContent = c[0]; popCity.appendChild(o);
+});
+let popUid = 0;
+
+/* 当前地点若不在城市表里（EXIF 定位到县/省），临时插一个选项，避免下拉显示空白 */
+function ensureCityOption(name) {
+  if (!name) return;
+  if (Array.prototype.some.call(popCity.options, function (o) { return o.value === name; })) return;
+  const o = document.createElement('option');
+  o.value = name; o.textContent = name; o.dataset.extra = '1';
+  popCity.insertBefore(o, popCity.firstChild);
+}
+
+function fitViewerImg() {
+  const nw = viewerImg.naturalWidth, nh = viewerImg.naturalHeight;
+  if (!nw || !nh) return;
+  // 与 CSS 的上限对齐，再扣掉拍立得白边（左右 12+12、上 12、下 46）
+  const capW = Math.min(innerWidth * 0.86, 1400) - 24;
+  const capH = (innerHeight - 150) - 58;
+  const k = Math.min(capW / nw, capH / nh);
+  viewerImg.style.width = Math.round(nw * k) + 'px';
+  viewerImg.style.height = Math.round(nh * k) + 'px';
+}
+
+/* 「回原位」只在照片被手动拖过时可用 */
+function syncPopReset() {
+  const btn = document.getElementById('popReset');
+  const p = photos.find(function (q) { return q.uid === popUid; });
+  btn.hidden = !(p && p.pos);
+}
+
+function openViewer(uid) {
+  const p = photos.find(function (q) { return q.uid === uid; });
+  if (!p) return;
+  popUid = uid;
+  viewerImg.style.width = ''; viewerImg.style.height = '';
+  viewerImg.src = p.url;
+  ensureCityOption(p.city);
+  popCity.value = p.city;
+  viewer.classList.add('on');
+  syncPopReset();
+  if (viewerImg.complete) fitViewerImg();
+  else viewerImg.onload = fitViewerImg;
+}
+function hideViewer() { viewer.classList.remove('on'); popUid = 0; }
+/* 兼容旧调用点（导出 / 平移前收起预览） */
+function hidePopover() { hideViewer(); }
+
+viewer.addEventListener('click', function (ev) {
+  if (ev.target === viewer) hideViewer();
+});
+document.getElementById('viewerClose').addEventListener('click', hideViewer);
+popCity.addEventListener('change', function () {
+  const p = photos.find(function (q) { return q.uid === popUid; });
+  if (!p) return;
+  p.city = popCity.value;
+  const c = CITY_INDEX[p.city];
+  if (c) { p.lon = c.lon; p.lat = c.lat; }
+  p.locked = true;
+  renderPhotos();
+  syncFocusSelect();
+});
+document.getElementById('popReset').addEventListener('click', function () {
+  const p = photos.find(function (q) { return q.uid === popUid; });
+  if (!p) return;
+  p.pos = null;
+  renderPhotos();
+  syncPopReset();
+});
+document.getElementById('popDel').addEventListener('click', function () {
+  const uid = popUid;
+  hideViewer();
+  photos = photos.filter(function (q) { return q.uid !== uid; });
+  if (!photos.length) useDemo();
+  else { renderPhotos(); fitToPins(true); syncFocusSelect(); }
+});
+window.addEventListener('keydown', function (ev) {
+  if (ev.key === 'Escape') hideViewer();
+});
+
+/* --------------------------------------------------------- 照片增删改 --- */
+function nextCity() {
+  const used = new Set(photos.map(function (p) { return p.city; }));
+  for (let i = 0; i < SPREAD.length; i++) if (!used.has(SPREAD[i])) return SPREAD[i];
+  for (let i = 0; i < CITIES.length; i++) if (!used.has(CITIES[i][0])) return CITIES[i][0];
+  return CITIES[Math.floor(rnd() * CITIES.length)][0];
+}
+
+function makePhoto(city) {
+  const c = CITY_INDEX[city] || CITIES[0];
+  return {
+    uid: uidSeq++,
+    url: null, w: 1, h: 1,
+    city: city,
+    lon: c.lon, lat: c.lat,
+    locked: false
+  };
+}
+
+function useDemo() {
+  photos = [];
+  DEMO_DATA.forEach(function (d) {
+    photos.push({
+      uid: uidSeq++,
+      url: d.uri, w: d.w, h: d.h,
+      lon: d.lon, lat: d.lat,
+      city: locateLabel(d.lon, d.lat),
+      locked: false, demo: true
+    });
+  });
+  renderPhotos();
+  resetView(true);
+  syncFocusSelect();
+}
+
+function readAsDataURL(file) {
+  return new Promise(function (res, rej) {
+    const fr = new FileReader();
+    fr.onload = function () { res(fr.result); };
+    fr.onerror = rej;
+    fr.readAsDataURL(file);
+  });
+}
+function loadSize(url) {
+  return new Promise(function (res) {
+    const img = new Image();
+    img.onload = function () { res({ w: img.naturalWidth || 4, h: img.naturalHeight || 5 }); };
+    img.onerror = function () { res({ w: 0, h: 0 }); };   // 0 = 浏览器解码不了（HEIC 等）
+    img.src = url;
+  });
+}
+
+/* ---------------- JPEG EXIF GPS 解析（零依赖，只取经纬度） ---------------- */
+function exifTypeSize(t) {
+  return (t === 1 || t === 2 || t === 6 || t === 7) ? 1 :
+         (t === 3 || t === 8) ? 2 :
+         (t === 4 || t === 9 || t === 11) ? 4 :
+         (t === 5 || t === 10 || t === 12) ? 8 : 1;
+}
+function parseExifGps(buf) {
+  try {
+    const dv = new DataView(buf);
+    if (dv.byteLength < 12 || dv.getUint16(0) !== 0xFFD8) return null;
+    let off = 2, tiff = -1;
+    while (off + 4 <= dv.byteLength) {
+      if (dv.getUint8(off) !== 0xFF) { off++; continue; }
+      const marker = dv.getUint8(off + 1);
+      if (marker === 0x00) { off++; continue; }
+      if (marker === 0xD8 || (marker >= 0xD0 && marker <= 0xD7) || marker === 0x01) { off += 2; continue; }
+      if (marker === 0xDA || off + 4 > dv.byteLength) break;      // SOS：EXIF 必在其前
+      const len = dv.getUint16(off + 2);
+      if (marker === 0xE1 && off + 10 <= dv.byteLength &&
+          dv.getUint32(off + 4) === 0x45786966 && dv.getUint16(off + 8) === 0) { tiff = off + 10; break; }
+      off += 2 + len;
+    }
+    if (tiff < 0 || tiff + 8 > dv.byteLength) return null;
+    const le = dv.getUint16(tiff) === 0x4949;
+    const u16 = function (o) { return dv.getUint16(o, le); };
+    const u32 = function (o) { return dv.getUint32(o, le); };
+    if (u16(tiff + 2) !== 0x2A) return null;
+    const ifd0 = tiff + u32(tiff + 4);
+    if (ifd0 + 2 > dv.byteLength) return null;
+    const n0 = u16(ifd0);
+    let gpsOff = 0;
+    for (let i = 0; i < n0; i++) {
+      const e = ifd0 + 2 + i * 12;
+      if (e + 12 > dv.byteLength) return null;
+      if (u16(e) === 0x8825) { gpsOff = tiff + u32(e + 8); break; }
+    }
+    if (!gpsOff || gpsOff + 2 > dv.byteLength) return null;
+    const ng = u16(gpsOff);
+    let latRef = 78, lonRef = 69, lat = null, lon = null;   // 'N' / 'E'
+    const rat = function (o) { const n = u32(o), d = u32(o + 4); return d ? n / d : 0; };
+    for (let i = 0; i < ng; i++) {
+      const e = gpsOff + 2 + i * 12;
+      if (e + 12 > dv.byteLength) break;
+      const tag = u16(e), typ = u16(e + 2), cnt = u32(e + 4);
+      const vo = cnt * exifTypeSize(typ) > 4 ? tiff + u32(e + 8) : e + 8;
+      if (vo + 8 > dv.byteLength) continue;
+      if (tag === 1 && typ === 2) latRef = dv.getUint8(vo);
+      else if (tag === 3 && typ === 2) lonRef = dv.getUint8(vo);
+      else if (tag === 2 && typ === 5 && cnt >= 3) lat = rat(vo) + rat(vo + 8) / 60 + rat(vo + 16) / 3600;
+      else if (tag === 4 && typ === 5 && cnt >= 3) lon = rat(vo) + rat(vo + 8) / 60 + rat(vo + 16) / 3600;
+    }
+    if (lat === null || lon === null || !isFinite(lat) || !isFinite(lon)) return null;
+    if (latRef === 83) lat = -lat;        // 'S'
+    if (lonRef === 87) lon = -lon;        // 'W'
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    return { lat: lat, lon: lon };
+  } catch (e) { return null; }
+}
+
+/* GPS → 地点标签：120km 内取最近城市，否则取所在省，最后兜底最近城市 */
+function nearestCity(lon, lat) {
+  let best = null, bd = Infinity;
+  for (let i = 0; i < CITIES.length; i++) {
+    const c = CITIES[i];
+    const dx = (c[1] - lon) * 111 * Math.cos((c[2] + lat) / 2 * D2R);
+    const dy = (c[2] - lat) * 111;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bd) { bd = d2; best = { name: c[0], km: Math.sqrt(d2) }; }
+  }
+  return best;
+}
+function pipRing(ring, x, y) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function provinceOf(lon, lat) {
+  for (let i = 0; i < PROVINCES.length; i++) {
+    const polys = PROVINCES[i].polys;
+    for (let a = 0; a < polys.length; a++) {
+      let hit = false;
+      for (let b = 0; b < polys[a].length; b++) if (pipRing(polys[a][b], lon, lat)) hit = !hit;
+      if (hit) return PROVINCES[i].name;
+    }
+  }
+  return null;
+}
+function shortProv(name) {
+  return name.replace('维吾尔自治区', '').replace('回族自治区', '').replace('壮族自治区', '')
+             .replace('特别行政区', '').replace('自治区', '').replace('省', '').replace('市', '');
+}
+function locateLabel(lon, lat) {
+  const nc = nearestCity(lon, lat);
+  if (nc && nc.km <= 120) return nc.name;
+  const pv = provinceOf(lon, lat);
+  if (pv) return shortProv(pv);
+  return nc ? nc.name : '未知地点';
+}
+
+async function addFiles(files) {
+  const arr = Array.prototype.slice.call(files).filter(function (f) { return /^image\//.test(f.type); });
+  if (!arr.length) return;
+  // 首次上传时把示例换成真实照片
+  if (photos.length && photos.every(function (p) { return p.demo; })) photos = [];
+
+  let bad = 0;
+  for (let i = 0; i < arr.length; i++) {
+    const url = await readAsDataURL(arr[i]);
+    const sz = await loadSize(url);
+    if (sz.w < 8) { bad++; continue; }   // 浏览器解不了（多为 iPhone 的 HEIC）
+    const p = makePhoto(CITIES[0][0]);
+    p.url = url; p.w = sz.w; p.h = sz.h;
+    // 优先读 EXIF GPS：真实定位，不编地名
+    let gps = null;
+    try { gps = parseExifGps(await arr[i].arrayBuffer()); } catch (e) { gps = null; }
+    if (gps) {
+      p.lon = clamp(gps.lon, MIN_LON, MAX_LON);
+      p.lat = clamp(gps.lat, MIN_LAT, MAX_LAT);
+      p.city = locateLabel(p.lon, p.lat);
+      p.gps = true;
+      p.locked = true;
+    } else {
+      p.city = nextCity();
+      const c = CITY_INDEX[p.city];
+      p.lon = c.lon; p.lat = c.lat;
+    }
+    photos.push(p);
+    if (photos.length >= 40) break;
+  }
+  fitToPins(true);   // 内部会先按终态视图重排，再补间过去
+  syncFocusSelect();
+  if (bad) showHint(bad + ' 张照片浏览器解码不了（多为 iPhone 的 HEIC），先转成 JPEG 再加');
+  else hideHint();
+}
+
+/* ---------------------------------------------------------- 省聚焦下拉 --- */
+const selFocus = document.getElementById('selFocus');
+
+function syncFocusSelect() {
+  if (selFocus.dataset.built === '1') return;
+  const o0 = document.createElement('option');
+  o0.value = ''; o0.textContent = '聚焦：我的全部';
+  selFocus.appendChild(o0);
+  provUV.slice().sort(function (a, b) { return a.name.localeCompare(b.name, 'zh'); })
+    .forEach(function (pv) {
+      const o = document.createElement('option');
+      o.value = pv.name; o.textContent = pv.name;
+      selFocus.appendChild(o);
+    });
+  selFocus.dataset.built = '1';
+}
+
+selFocus.addEventListener('change', function () {
+  const v = selFocus.value;
+  if (!v) { resetView(true); return; }
+  const pv = provUV.find(function (q) { return q.name === v; });
+  if (!pv) return;
+  const b = pv.b;
+  const padU = Math.max((b.u1 - b.u0) * 0.18, 1.2);
+  const padV = Math.max((b.v1 - b.v0) * 0.18, 1.2);
+  const fit = fitTo({
+    u0: b.u0 - padU, u1: b.u1 + padU,
+    v0: b.v0 - padV, v1: b.v1 + padV
+  }, CARD.w, CARD.h, 60);
+  setView(fit, true);
+});
+
+/* ------------------------------------------------------------- 工具条 --- */
+const fileInput = document.getElementById('file');
+document.getElementById('btnAdd').addEventListener('click', function () { fileInput.click(); });
+fileInput.addEventListener('change', function () {
+  if (fileInput.files && fileInput.files.length) addFiles(fileInput.files);
+  fileInput.value = '';
+});
+document.getElementById('btnFit').addEventListener('click', function () {
+  selFocus.value = '';
+  resetView(true);
+});
+document.getElementById('btnDemo').addEventListener('click', function () {
+  selFocus.value = '';
+  useDemo();
+});
+document.getElementById('btnExport').addEventListener('click', exportPNG);
+
+/* 拖动文件 */
+let dragDepth = 0;
+const dropEl = document.getElementById('drop');
+window.addEventListener('dragenter', function (ev) {
+  if (!ev.dataTransfer || Array.prototype.indexOf.call(ev.dataTransfer.types, 'Files') < 0) return;
+  ev.preventDefault(); dragDepth++; dropEl.classList.add('on');
+});
+window.addEventListener('dragover', function (ev) {
+  if (ev.dataTransfer && Array.prototype.indexOf.call(ev.dataTransfer.types, 'Files') >= 0) {
+    ev.preventDefault(); ev.dataTransfer.dropEffect = 'copy';
+  }
+});
+window.addEventListener('dragleave', function () {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) dropEl.classList.remove('on');
+});
+window.addEventListener('drop', function (ev) {
+  ev.preventDefault();
+  dragDepth = 0; dropEl.classList.remove('on');
+  if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length) addFiles(ev.dataTransfer.files);
+});
+
+const hintEl = document.getElementById('hint');
+let hintTimer = null;
+function hideHint() {
+  if (hintTimer) return;
+  hintTimer = setTimeout(function () { hintEl.classList.add('gone'); hintTimer = null; }, 900);
+}
+/* 临时提示（解码失败等），7 秒后自动淡出 */
+function showHint(msg) {
+  if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
+  hintEl.textContent = msg;
+  hintEl.style.color = '#E8B27A';
+  hintEl.classList.remove('gone');
+  hintTimer = setTimeout(function () { hintEl.classList.add('gone'); hintTimer = null; }, 7000);
+}
+
+/* ------------------------------------------------------------- 导出 --- */
+const EXPORT_H = 1200;
+async function exportPNG() {
+  hideViewer();
+  // 导出按当前画布比例，长边固定 1200 高 → 宽随画布比例
+  const outH = EXPORT_H, outW = Math.round(outH * BW / BH);
+  const clone = board.cloneNode(true);
+  clone.setAttribute('width', outW);
+  clone.setAttribute('height', outH);
+  clone.setAttribute('viewBox', '0 0 ' + BW + ' ' + BH);
+  clone.setAttribute('xmlns', NS);
+  clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+
+  const xml = new XMLSerializer().serializeToString(clone);
+  const blob = new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n' + xml],
+                        { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await new Promise(function (res, rej) {
+      const im = new Image();
+      im.onload = function () { res(im); };
+      im.onerror = function () { rej(new Error('SVG 光栅化失败')); };
+      im.src = url;
+    });
+    const cv = document.createElement('canvas');
+    cv.width = outW; cv.height = outH;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#140E0A';
+    ctx.fillRect(0, 0, outW, outH);
+    ctx.drawImage(img, 0, 0, outW, outH);
+    cv.toBlob(function (b) {
+      if (!b) return;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(b);
+      a.download = '照片地图墙-' + new Date().toISOString().slice(0, 10) + '.png';
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+    }, 'image/png');
+  } catch (e) {
+    alert('导出失败：' + e.message);
+  } finally {
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+}
+
+/* ------------------------------------------------------------- 启动 --- */
+/* 清空并按当前窗口比例重建全部几何（缩放窗口时用）。
+   view 是卡片局部坐标下的变换，卡片尺寸不变 → 重建后原视图依然有效。 */
+function rebuildCanvas() {
+  if (typeof tweenToken !== 'undefined' && tweenToken) { cancelAnimationFrame(tweenToken); tweenToken = null; }
+  dragPin = null; panState = null; dragPhoto = null;
+  board.textContent = '';
+  defsEl = el('defs', null, board);
+  yarnNodes.clear(); yarnParts.clear(); photoNodes.clear(); pinNodes.clear();
+  photoClips.length = 0;
+  provUV.length = 0;
+  layoutInfo = null;
+
+  computeCanvas();
+  placeCard();
+  buildBoard();
+  buildCard();
+  buildPhotosLayer();
+  bindMapInteractions();
+
+  baseView = fitTo(uvBounds(coreUV), CARD.w, CARD.h, 16);
+  buildProvinceLabels();
+  applyView();
+  if (photos.length) renderPhotos();
+  if (viewer.classList.contains('on')) fitViewerImg();
+}
+
+function boot() {
+  board.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  computeCanvas();
+  placeCard();
+
+  buildBoard();
+  buildCard();
+  buildPhotosLayer();
+  bindMapInteractions();
+
+  // 基准：中国核心范围适配进卡片
+  baseView = fitTo(uvBounds(coreUV), CARD.w, CARD.h, 16);
+  view = { s: baseView.s, tx: baseView.tx, ty: baseView.ty };
+
+  // 省名依赖 baseView 定字号，必须放在基准算好之后
+  buildProvinceLabels();
+
+  syncFocusSelect();
+  useDemo();
+  applyView();
+  hideHint();
+
+  // 窗口尺寸变化 → 重算画布宽度与全部排布（防抖）
+  let rzTimer = null;
+  window.addEventListener('resize', function () {
+    if (rzTimer) clearTimeout(rzTimer);
+    rzTimer = setTimeout(function () { rzTimer = null; rebuildCanvas(); }, 150);
+  });
+}
+
+/* 自检钩子（供验收用） */
+window.__dbg = {
+  photos: function () { return photos; },
+  polDims: polDims, proj: proj, uvToCard: uvToCard, cardToBoard: cardToBoard,
+  layout: function (cw, gap) { const r = ringLayout(photos, cw, gap || 16); return { fits: r.fits, x: r.x }; },
+  ringLen: function () { return ringLen; },
+  yarnPath: yarnPath, segCross: segCross,
+  parseExifGps: parseExifGps, locateLabel: locateLabel, nearestCity: nearestCity, provinceOf: provinceOf,
+  vw: function () { return { s: view.s, tx: view.tx, ty: view.ty }; },
+  tgt: function () { return fitPinsTarget(); },
+};
+window.__selfTest = function () {
+  const issues = [];
+  if (!layoutInfo) issues.push('layout 为空');
+  if (layoutInfo && !layoutInfo.fits) issues.push('环形排布放不下：n=' + photos.length);
+  // 重叠检测：getBBox 是元素自身坐标系，必须乘 CTM 换到画布坐标
+  const boxes = [];
+  photos.forEach(function (p) {
+    const node = photoNodes.get(p.uid);
+    if (!node) { issues.push('缺少照片节点 ' + p.city); return; }
+    const b = node.getBBox();
+    // getCTM 是「元素 → 屏幕」，还含窗口缩放；先除掉 board 的 CTM，才落在 1600×1000 画布坐标
+    const toDM = function (mx) { return new DOMMatrix([mx.a, mx.b, mx.c, mx.d, mx.e, mx.f]); };
+    const m = toDM(board.getCTM()).inverse().multiply(toDM(node.getCTM()));
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    [[b.x, b.y], [b.x + b.width, b.y], [b.x, b.y + b.height], [b.x + b.width, b.y + b.height]]
+      .forEach(function (q) {
+        const X = m.a * q[0] + m.c * q[1] + m.e;
+        const Y = m.b * q[0] + m.d * q[1] + m.f;
+        if (X < x0) x0 = X; if (X > x1) x1 = X;
+        if (Y < y0) y0 = Y; if (Y > y1) y1 = Y;
+      });
+    boxes.push({ city: p.city, x: +x0.toFixed(1), y: +y0.toFixed(1),
+                 w: +(x1 - x0).toFixed(1), h: +(y1 - y0).toFixed(1) });
+  });
+  for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+    const a = boxes[i], b = boxes[j];
+    const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    if (ox > 1 && oy > 1) issues.push('重叠：' + a.city + '×' + b.city + ' ' + ox.toFixed(1) + '×' + oy.toFixed(1));
+  }
+  // 出界检测
+  boxes.forEach(function (b) {
+    // 照片现在绕地图一圈，合法范围是整个画布（留 2px 抗锯齿）
+    if (b.x < 2 || b.y < 2 || b.x + b.w > BW - 2 || b.y + b.h > BH - 2)
+      issues.push('出界：' + b.city + ' ' + JSON.stringify({ x: +b.x.toFixed(1), y: +b.y.toFixed(1), w: +b.w.toFixed(1), h: +b.h.toFixed(1) }));
+  });
+  // 红线交叉检测：与排布用同一条 yarnPath（同样采样、同样下垂）、同一个针位，口径必须一致
+  computePinCard();
+  const chains = [];
+  photos.forEach(function (p) {
+    const from = cardToBoard(p._pinCard[0], p._pinCard[1]);
+    const to = p._pinBoard;
+    if (!to) return;
+    chains.push(yarnPath(from, to));
+  });
+  let crossings = 0;
+  // 与排布共用 segCross（同一阈值），否则「排布判 0、自检判 1」
+  for (let i = 0; i < chains.length; i++) for (let j = i + 1; j < chains.length; j++) {
+    const A = chains[i], B = chains[j];
+    outer:
+    for (let a = 0; a < A.length - 1; a++) for (let b = 0; b < B.length - 1; b++)
+      if (segCross(A[a], A[a + 1], B[b], B[b + 1])) { crossings++; break outer; }
+  }
+  return {
+    photos: photos.length,
+    provinces: provUV.length,
+    chinaRings: CHINA_POLYGONS.length,
+    baseScale: +baseView.s.toFixed(3),
+    viewScale: +view.s.toFixed(3),
+    yarns: layerYarnInner.childNodes.length,
+    pins: layerPins.childNodes.length,
+    crossings: crossings,
+    boxes: boxes,
+    issues: issues
+  };
+};
+
+boot();
+
+})();
+</script>
+</body>
+</html>
