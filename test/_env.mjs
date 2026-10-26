@@ -17,6 +17,7 @@ export const SHOTS_DIR = path.join(ROOT, 'test', 'shots');
 export const TEST_IMGS = path.join(TMP, 'testimg');
 export const IMGS15 = path.join(TMP, 'imgs15');
 export const EXIFCASES = path.join(TMP, 'exifcases');
+export const WORLDCASES = path.join(TMP, 'worldcases');
 export const PROV_FILE = path.join(ROOT, 'data', 'provinces.js');
 export const DEMO5 = path.join(ROOT, 'assets', 'demo5');
 
@@ -50,7 +51,7 @@ export function userDataDir(name) {
 }
 
 export function ensureDirs() {
-  for (const d of [TMP, SHOTS_DIR, TEST_IMGS, IMGS15, EXIFCASES]) {
+  for (const d of [TMP, SHOTS_DIR, TEST_IMGS, IMGS15, EXIFCASES, WORLDCASES]) {
     fs.mkdirSync(d, { recursive: true });
   }
 }
