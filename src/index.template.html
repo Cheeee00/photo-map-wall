@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>照片地图墙</title>
 <style>
   :root{
@@ -14,16 +14,39 @@
     margin:0;height:100%;overflow:hidden;background:#211D1A;
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
     -webkit-font-smoothing:antialiased;
+    /* iOS：禁止双击缩放与长按弹出菜单，点按不要灰色高亮 */
+    -webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;
+    touch-action:manipulation;
   }
+  /* --uih = 底部给工具条预留的高度（手机要额外扣掉安全区） */
+  :root{--uih:76px;}
   #stage{position:fixed;inset:0;}
-  /* 底部留出 76px 给工具条：画布永远不会被工具条压住 */
-  #board{width:100vw;height:calc(100vh - 76px);display:block;touch-action:none;
+  /* 底部留出 --uih 给工具条：画布永远不会被工具条压住 */
+  #board{width:100vw;height:calc(100vh - var(--uih));display:block;touch-action:none;
     -webkit-user-select:none;user-select:none;}
+  /* iOS Safari：100vh 会算进地址栏，用 dvh 才是真正可见高度 */
+  @supports (height:100dvh){#board{height:calc(100dvh - var(--uih));}}
+
+  /* ---------- 触屏缩放按钮（手机上滚轮不存在） ---------- */
+  #zoomer{
+    position:fixed;right:12px;z-index:20;display:none;flex-direction:column;gap:8px;
+    bottom:calc(var(--uih) - 6px);
+  }
+  #zoomer button{
+    appearance:none;width:40px;height:40px;border-radius:50%;cursor:pointer;
+    font-size:20px;line-height:1;font-family:inherit;color:#E8DCCB;
+    background:rgba(28,20,15,.82);border:1px solid rgba(214,190,160,.18);
+    box-shadow:0 6px 18px rgba(0,0,0,.42);
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  }
+  #zoomer button:active{background:rgba(245,225,200,.16);}
+  @media (hover:none),(max-width:560px){ #zoomer{display:flex;} }
 
   /* ---------- 工具条 ---------- */
   #ui{
-    position:fixed;left:50%;bottom:22px;transform:translateX(-50%);
+    position:fixed;left:50%;bottom:calc(22px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);
     display:flex;align-items:center;gap:6px;padding:7px 9px;
+    max-width:calc(100vw - 16px);box-sizing:border-box;
     background:rgba(28,20,15,.82);
     border:1px solid rgba(214,190,160,.16);
     border-radius:999px;
@@ -32,6 +55,21 @@
     -webkit-backdrop-filter:blur(14px) saturate(1.1);
     z-index:20;
     transition:opacity .3s, transform .3s;
+  }
+  /* 窄屏：只留图标，保证整条工具条塞进屏幕（手机上原来会被裁掉左右两头） */
+  @media (max-width:560px){
+    :root{--uih:calc(104px + env(safe-area-inset-bottom,0px));}
+    #ui{
+      left:8px;right:8px;transform:none;justify-content:space-between;
+      gap:2px;padding:5px 6px;border-radius:16px;
+      bottom:calc(8px + env(safe-area-inset-bottom,0px));
+    }
+    #ui.hidden{transform:translateY(14px);}
+    #ui .sep{display:none;}
+    .btn{padding:10px 11px;font-size:12.5px;gap:0;}
+    .btn .lbl{display:none;}
+    #btnAdd .lbl{display:inline;}
+    select.gsel{max-width:104px;font-size:12.5px;padding:9px 22px 9px 10px;}
   }
   #ui.hidden{opacity:0;transform:translateX(-50%) translateY(14px);pointer-events:none;}
   #ui .sep{width:1px;height:20px;background:rgba(214,190,160,.14);margin:0 3px;}
@@ -148,19 +186,24 @@
 
 <div id="ui">
   <button class="btn primary" id="btnAdd">
-    <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>加照片
+    <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">加照片</span>
   </button>
   <div class="sep"></div>
   <select class="gsel" id="selFocus" title="聚焦区域"></select>
   <div class="sep"></div>
-  <button class="btn" id="btnFit">
-    <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5"/></svg>适应全部
+  <button class="btn" id="btnFit" title="适应全部">
+    <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5"/></svg><span class="lbl">适应全部</span>
   </button>
-  <button class="btn" id="btnExport">
-    <svg viewBox="0 0 24 24"><path d="M12 16V4m0 12l-4-4m4 4l4-4M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2"/></svg>导出
+  <button class="btn" id="btnExport" title="导出 PNG">
+    <svg viewBox="0 0 24 24"><path d="M12 16V4m0 12l-4-4m4 4l4-4M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2"/></svg><span class="lbl">导出</span>
   </button>
   <div class="sep"></div>
   <button class="btn" id="btnDemo" title="恢复示例照片">示例</button>
+</div>
+
+<div id="zoomer">
+  <button id="btnZoomIn" title="放大" aria-label="放大">+</button>
+  <button id="btnZoomOut" title="缩小" aria-label="缩小">−</button>
 </div>
 
 <div id="drop">松开以添加到墙</div>
@@ -214,24 +257,35 @@ const SPREAD = ['北京','成都','厦门','哈尔滨','乌鲁木齐','广州','
 
 /* ------------------------------------------------------------- 基础常量 --- */
 const NS = 'http://www.w3.org/2000/svg';
-const BH = 1000;                            // 画布高度固定
+const BH0 = 1000;                           // 基准画布高度
+let BH = 1000;                              // 画布高度（手机竖屏会变高，见 computeCanvas）
 let BW = 1600;                              // 画布宽度随窗口比例变化（见 computeCanvas）
 const D2R = Math.PI / 180;
 
-/* 画布宽度跟随窗口宽高比：viewBox 与窗口同比例 → 铺满，不留黑边 */
+/* 画布跟随可视区域宽高比：viewBox 与窗口同比例 → 铺满，不留黑边。
+   竖屏手机宽高比 < 0.83（比如 393×672）时，固定宽度 830、把高度撑大 —— 
+   地图占满宽度，照片落到地图上下两条大走廊里。 */
 function computeCanvas() {
-  const availH = Math.max(320, window.innerHeight - 76);
-  BW = Math.round(clamp(BH * window.innerWidth / availH, 700, 3400));
+  // SVG 元素没有可靠的 clientWidth/clientHeight，用 getBoundingClientRect
+  const r = board.getBoundingClientRect();
+  const availW = Math.max(280, Math.round(r.width) || window.innerWidth);
+  const availH = Math.max(280, Math.round(r.height) || (window.innerHeight - 76));
+  let bw = Math.round(BH0 * availW / availH), bh = BH0;
+  if (bw < 830) { bw = 830; bh = Math.round(830 * availH / availW); }
+  BW = clamp(bw, 830, 3400);
+  BH = clamp(bh, BH0, 2800);
   board.setAttribute('viewBox', '0 0 ' + BW + ' ' + BH);
 }
 
 // 地图件居中，四周留出上/右/下/左四条走廊给照片 → 照片真的绕地图一圈
-// 700×470 ≈ 中国外接框的真实比例（1.43），地图件铺满这一块，照片绕在外圈
+// 700×470 ≈ 中国外接框的真实比例（1.43）；窄画布时按比例缩小
 const CARD = { x: 450, y: 265, w: 700, h: 470, rot: -1.2 };
 CARD.cx = CARD.x + CARD.w / 2;
 CARD.cy = CARD.y + CARD.h / 2;
 
 function placeCard() {
+  CARD.w = Math.round(clamp(BW * 0.84, 300, 700));
+  CARD.h = Math.round(CARD.w * 470 / 700);
   CARD.cx = BW / 2;
   CARD.x = CARD.cx - CARD.w / 2;
   CARD.cy = BH / 2;
@@ -408,16 +462,28 @@ function buildCard() {
 /* 省名：只给放得下的省画，字随缩放一起变大（像印在这块料上） */
 function buildProvinceLabels() {
   const fs0 = 10.6 / baseView.s;         // 基准字号（uv 单位）≈ 10.6px
+  // 小画布（手机竖屏）上地图只有五百来像素宽，全画 35 个省名会糊成一团：
+  // 只留面积最大的若干个，宁可少画也别画成噪点。
+  let keep = null;
+  if (BW < 1100) {
+    keep = new Set();
+    PROVINCES.slice()
+      .filter(function (p) { return p.label && p.name && p.r >= 0.60; })
+      .sort(function (a, b) { return b.r - a.r; })
+      .slice(0, 14)
+      .forEach(function (p) { keep.add(p.name); });
+  }
   for (let i = 0; i < PROVINCES.length; i++) {
     const pr = PROVINCES[i];
     if (!pr.label || !pr.name) continue;
+    if (keep && !keep.has(pr.name)) continue;
     if (!(pr.r >= 0.60)) continue;        // 太小放不下（京/津/沪/港/澳）
     const uv = proj(pr.label[0], pr.label[1]);
     const name = shortProv(pr.name);
-    // 2~3 个字要能塞进内切圆：字宽 ≈ 字高，故限制总宽 ≤ 1.7r
-    const byWidth = (1.7 * pr.r) / Math.max(1, name.length);
+    // 2~3 个字要能塞进内切圆：字宽 ≈ 字高，故限制总宽 ≤ 1.5r
+    const byWidth = (1.5 * pr.r) / Math.max(1, name.length);
     const fs = Math.min(fs0, byWidth);
-    if (fs < fs0 * 0.46) continue;
+    if (fs < fs0 * 0.52) continue;
     textNode(name, {
       x: nf(uv[0]), y: nf(uv[1] + fs * 0.36), 'text-anchor': 'middle',
       'font-size': nf(fs), 'font-family': "'PingFang SC','Microsoft YaHei',sans-serif",
@@ -619,9 +685,9 @@ function corridors() {
   const M = CORR.M, m = CORR.m;
   return [
     { x0: CARD.x - m,          y0: M, x1: CARD.x + CARD.w + m,          y1: CARD.y - m },
-    { x0: CARD.x + CARD.w + m, y0: M, x1: BW - M,                     y1: 1000 - M },
-    { x0: CARD.x - m,          y0: CARD.y + CARD.h + m, x1: CARD.x + CARD.w + m, y1: 1000 - M },
-    { x0: M,                   y0: M, x1: CARD.x - m,                    y1: 1000 - M }
+    { x0: CARD.x + CARD.w + m, y0: M, x1: BW - M,                     y1: BH - M },
+    { x0: CARD.x - m,          y0: CARD.y + CARD.h + m, x1: CARD.x + CARD.w + m, y1: BH - M },
+    { x0: M,                   y0: M, x1: CARD.x - m,                    y1: BH - M }
   ];
 }
 
@@ -783,6 +849,33 @@ function ringLayout(items, contentW, gap) {
   return { fits: true, cells: cells, x: curX };
 }
 
+/* 极端兜底：槽位不够时多出来的照片沿同一槽位阶梯叠放（像真的拍立得摞在一起） */
+function cascadeLayout(items, contentW) {
+  const a = ROT_MAX * D2R, ca = Math.cos(a), sa = Math.sin(a);
+  const info = items.map(function (p) {
+    const d = polDims(p, contentW);
+    return { p: p, d: d, bw: d.pw * ca + d.ph * sa, bh: d.pw * sa + d.ph * ca };
+  });
+  let bwMax = 0, bhMax = 0;
+  info.forEach(function (q) { bwMax = Math.max(bwMax, q.bw); bhMax = Math.max(bhMax, q.bh); });
+  const slots = corridorSlots(Math.ceil(bwMax) + 2, Math.ceil(bhMax) + 2);
+  const cells = new Map();
+  if (!slots.length) return { fits: false, cells: cells };
+  const n = slots.length;
+  info.forEach(function (q, i) {
+    const s = slots[i % n], k = Math.floor(i / n);
+    const ax = s.ax + k * 6, ay = s.ay + k * 6;
+    const rot = angOf(q.p.uid), rad = rot * D2R;
+    const ly = PIN_Y - q.d.ph / 2;
+    cells.set(q.p.uid, {
+      cx: ax + ly * Math.sin(rad),
+      cy: ay - ly * Math.cos(rad),
+      ax: ax, ay: ay, rot: rot, d: q.d
+    });
+  });
+  return { fits: true, cells: cells, cascade: true };
+}
+
 /* 每张照片的旋转角：uid 派生、稳定不变（刷新/重排后仍是同一个角度） */
 const PIN_Y = 9;
 function angOf(uid) { return ((uid * 2654435761) % 1000 / 1000 * 2 - 1) * ROT_MAX; }
@@ -801,17 +894,21 @@ function renderPhotos() {
 
   // 找合适的内容宽（环形排布放不下就逐级缩小）
   let contentW = 200, lay = null;
-  const tryList = [200, 190, 180, 170, 160, 150, 140, 130, 120, 110, 100, 92, 84, 76, 68, 60];
+  const tryList = [200, 190, 180, 170, 160, 150, 140, 130, 120, 110, 100, 92, 84, 76, 68, 60, 54, 48, 42];
   for (let i = 0; i < tryList.length; i++) {
     contentW = tryList[i];
     lay = ringLayout(photos, contentW, contentW < 140 ? 8 : 14);
     if (lay.fits) break;
   }
+  // 兜底：照片多到连最小档都塞不进走廊时，让后几张沿同一槽位轻微错开叠放
+  // （宁可叠一点，也不能崩、不能画到画布外）
+  if (!lay.fits) lay = cascadeLayout(photos, contentW);
   layoutInfo = lay;
 
   for (let i = 0; i < photos.length; i++) {
     const p = photos[i];
     const cell = lay.cells.get(p.uid);
+    if (!cell) continue;
     const d = cell.d;
 
     // 针固定在槽位锚点上（布局算好的），旋转角由 uid 派生 → 稳定不变
@@ -901,13 +998,27 @@ function fitPinsTarget() {
     if (uv[0] < u0) u0 = uv[0]; if (uv[0] > u1) u1 = uv[0];
     if (uv[1] < v0) v0 = uv[1]; if (uv[1] > v1) v1 = uv[1];
   }
-  // 单点 / 极近的点：撑开到区域级视野
-  const minSpan = photos.length === 1 ? 22 : 11;
+  // 1 张、或 2–3 张挤在一起时，视野撑开到接近全中国：
+  // 否则一上传就放大到「只剩一个省」的区域级画面，用户根本认不出是中国（iPhone 实测反馈）
+  const n = photos.length;
+  const minSpan = n === 1 ? 58 : n <= 3 ? 34 : 11;
   const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2;
-  const spanU = Math.max(u1 - u0, minSpan);
-  const spanV = Math.max(v1 - v0, minSpan * 0.72);
-  const b = { u0: cu - spanU / 2, u1: cu + spanU / 2, v0: cv - spanV / 2, v1: cv + spanV / 2 };
-  return clampView(fitTo(b, CARD.w, CARD.h, 88));
+  let spanU = Math.max(u1 - u0, minSpan);
+  let spanV = Math.max(v1 - v0, minSpan * 0.72);
+  const mk = function () {
+    return { u0: cu - spanU / 2, u1: cu + spanU / 2, v0: cv - spanV / 2, v1: cv + spanV / 2 };
+  };
+  let t = fitTo(mk(), CARD.w, CARD.h, 88);
+  // 硬上限：不超过全中国基准视图的 1.5 倍 —— 再大就不像「一张中国地图」了
+  const capS = baseView.s * 1.5;
+  if (t.s > capS) {
+    const k = t.s / capS;
+    spanU *= k; spanV *= k;
+    t = fitTo(mk(), CARD.w, CARD.h, 88);
+  }
+  // 下限：不低于中国全览（fitTo 是把外接框居中，所以放大比例、中心不动即可）
+  if (t.s < baseView.s) t = { s: baseView.s, tx: t.tx, ty: t.ty };
+  return clampView(t);
 }
 
 /* 先按终态视图重排红线（零交叉只针对终态成立），再补间过去 */
@@ -1089,6 +1200,43 @@ function bindMapInteractions() {
   }, { passive: false });
 
   surface.addEventListener('dblclick', function () { resetView(true); });
+
+  /* ---- 双指捏合缩放：手机上唯一可用的缩放手势（滚轮不存在） ---- */
+  const ptrs = new Map();
+  let pinchD0 = 0, pinchS0 = 0;
+  const stageEl = document.getElementById('stage');
+  function ptrDist() {
+    const a = Array.from(ptrs.values());
+    return Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]);
+  }
+  function ptrMid() {
+    const a = Array.from(ptrs.values());
+    return { clientX: (a[0][0] + a[1][0]) / 2, clientY: (a[0][1] + a[1][1]) / 2 };
+  }
+  stageEl.addEventListener('pointerdown', function (ev) {
+    ptrs.set(ev.pointerId, [ev.clientX, ev.clientY]);
+    if (ptrs.size === 2) { panState = null; pinchD0 = ptrDist(); pinchS0 = view.s; }
+  });
+  stageEl.addEventListener('pointermove', function (ev) {
+    if (!ptrs.has(ev.pointerId)) return;
+    ptrs.set(ev.pointerId, [ev.clientX, ev.clientY]);
+    if (ptrs.size !== 2 || !(pinchD0 > 0)) return;
+    const d = ptrDist();
+    if (!(d > 0)) return;
+    const want = pinchS0 * d / pinchD0;          // 手势目标缩放
+    const f = want / view.s;
+    if (!isFinite(f) || f <= 0) return;
+    const b = clientToBoard(ptrMid());
+    const c = boardToCard(b[0], b[1]);
+    zoomAt(c[0], c[1], f);
+  });
+  const endPtr = function (ev) {
+    ptrs.delete(ev.pointerId);
+    if (ptrs.size < 2) pinchD0 = 0;
+  };
+  stageEl.addEventListener('pointerup', endPtr);
+  stageEl.addEventListener('pointercancel', endPtr);
+  stageEl.addEventListener('pointerleave', endPtr);
 }
 
 function onPanMove(ev) {
@@ -1441,6 +1589,13 @@ document.getElementById('btnDemo').addEventListener('click', function () {
   useDemo();
 });
 document.getElementById('btnExport').addEventListener('click', exportPNG);
+// 触屏缩放按钮（手机上显示，桌面隐藏）
+document.getElementById('btnZoomIn').addEventListener('click', function () {
+  zoomAt(CARD.cx, CARD.cy, 1.35);
+});
+document.getElementById('btnZoomOut').addEventListener('click', function () {
+  zoomAt(CARD.cx, CARD.cy, 1 / 1.35);
+});
 
 /* 拖动文件 */
 let dragDepth = 0;
@@ -1591,6 +1746,8 @@ window.__dbg = {
   parseExifGps: parseExifGps, locateLabel: locateLabel, nearestCity: nearestCity, provinceOf: provinceOf,
   vw: function () { return { s: view.s, tx: view.tx, ty: view.ty }; },
   tgt: function () { return fitPinsTarget(); },
+  canvas: function () { return { bw: BW, bh: BH, card: { x: CARD.x, y: CARD.y, w: CARD.w, h: CARD.h } }; },
+  baseS: function () { return baseView.s; },
 };
 window.__selfTest = function () {
   const issues = [];
