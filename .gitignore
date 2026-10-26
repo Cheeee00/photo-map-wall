@@ -1,4 +1,4 @@
-# 测试与运行产物，不入库
+﻿# 测试与运行产物，不入库
 test/shots/
 test/_tmp/
 
@@ -11,3 +11,4 @@ desktop.ini
 .vscode/
 .idea/
 *.log
+dist/
