@@ -47,6 +47,10 @@
 |---|---|---|
 | ![15 张](docs/02-fifteen.jpg) | ![预览](docs/03-viewer.jpg) | ![宽窗口](docs/04-wide.jpg) |
 
+切到「全球」档（下面这张是拿 5 张真照片各注入一个国外坐标拍的：巴黎 / 纽约 / 东京 / 悉尼 / 北京，上传后范围自动切到全球，地点按国家命名）：
+
+![全球档](docs/07-world.jpg)
+
 手机上（393×852，竖幅画布、工具条收成图标、右下角 +/−）：
 
 <img src="docs/06-mobile.jpg" width="280" alt="手机竖屏"> 
@@ -99,7 +103,7 @@ npx wrangler pages deploy dist --project-name=photo-map-wall --branch=main
 3. 槽位按绕卡片中心的方位角排序；照片按图钉的轴向坐标排序（右侧/左侧按纬度、上侧/下侧按经度）。两条序列之间用 DP 做保序最小代价指派。
 4. DP 只保证「顺序一致」，不保证「线不相交」。最后跑 2-opt：任取一对红线，若真实贝塞尔折线相交就交换它们对应的照片，且只接受总长下降的交换 —— 有界单调，必然终止。
 
-**尺寸自适应降档。** 照片内容宽从 200 px 开始，按 `200, 190, 180, …, 84` 逐档尝试，取第一个能把所有照片排下且满足「任意两张不重叠、全部在画布内」的档位。
+**尺寸自适应降档。** 照片内容宽从 200 px 开始，按 `200, 190, 180, …, 42`（19 档）逐档尝试，取第一个能把所有照片排下且满足「任意两张不重叠、全部在画布内」的档位。真到 42 px 还排不下（极端数量的照片），退回 `cascadeLayout()`：多出来的照片沿同一槽位阶梯错开叠放，宁可叠一点也不能出界或消失。
 
 **线是直的。** 早期版本给红线加了重力下垂（二次贝塞尔控制点下移），实测像流程图的反面 —— 线从照片中间穿过去很乱，所以改回直线。绘制顺序是「照片 → 红线」，红线压在照片上面。
 
@@ -112,12 +116,13 @@ node src/build.mjs              # 产出 index.html
 node src/build.mjs out.html     # 或者写到指定文件
 ```
 
-`src/build.mjs` 把四个占位符替换进 `src/index.template.html`：
+`src/build.mjs` 把五个占位符替换进 `src/index.template.html`：
 
 | 占位符 | 来源 |
 |---|---|
 | `//__CHINA_DATA__` | `data/china_coords.js` |
 | `//__PROV_DATA__` | `data/provinces.js` |
+| `//__WORLD_DATA__` | `data/world.js` |
 | `"__FELT_URI__"` | `assets/felt-final.jpg`（base64） |
 | `/*__DEMO_DATA__*/[]` | `assets/demo5/*.jpg`（base64 + 真实 GPS） |
 
@@ -162,7 +167,11 @@ node test/cdp-live.mjs                      # 线上冒烟：直接打公网 URL
 node test/test-parser.mjs       # 把页面里的 parseExifGps 抠出来，在 node 里跑 9 个样本
 node test/test-demo5.mjs        # 直接读 assets/demo5 的 5 张真实照片，确认 GPS 能解出来
 node test/cdp-exif2.mjs         # 真实走一遍文件上传，确认定位落到正确城市
+
+node test/cdp-docs.mjs          # 不是断言：生成 README 里那张「全球档」截图（真照片 + 注入坐标）
 ```
+
+`test/cdp-docs.mjs` 用的是「把真照片当载体、在 SOI 后插一个带 GPS 的 APP1」的做法（`test/_exif.mjs` 的 `injectGps()`），所以截图里是真实照片配虚构坐标，不会为了配图去伪造拍摄记录。
 
 想把测试跑在线上版本而不是本地文件，加一个环境变量就行：
 
@@ -216,9 +225,9 @@ PMW_URL=https://wall.orange0323.dpdns.org node test/cdp-shot.mjs 1600 1000 live.
 index.html              构建产物（唯一运行必需的文件）
 src/index.template.html 应用源码
 src/build.mjs           构建脚本
-data/                   地图数据（国界 / 省界 / 省名锚点）
+data/                   地图数据（中国国界 / 省界+省名锚点 / 世界国界，各含原始快照与简化产物）
 assets/                 毛毡纹理 + 5 张示例照片
-tools/                  一次性数据加工脚本（省界简化、省名锚点、HEIC 转码）
+tools/                  一次性数据加工脚本（省界简化、省名锚点、世界国界简化、HEIC 转码）
 test/                   CDP 自动化测试，全部可复跑
 docs/                   需求 / 记录 / 验收 / 截图
 ```
