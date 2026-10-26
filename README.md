@@ -173,6 +173,12 @@ node test/cdp-docs.mjs          # 不是断言：生成 README 里那张「全�
 
 `test/cdp-docs.mjs` 用的是「把真照片当载体、在 SOI 后插一个带 GPS 的 APP1」的做法（`test/_exif.mjs` 的 `injectGps()`），所以截图里是真实照片配虚构坐标，不会为了配图去伪造拍摄记录。
 
+文档也能自检（链接是否指得通、反引号里的路径是否存在、`build.mjs` 的占位符数量和 README 说的是否一致、README 里的 `index.html` 字节数是否等于实际产物）：
+
+```bash
+node tools/check_docs.mjs
+```
+
 想把测试跑在线上版本而不是本地文件，加一个环境变量就行：
 
 ```bash
@@ -227,7 +233,7 @@ src/index.template.html 应用源码
 src/build.mjs           构建脚本
 data/                   地图数据（中国国界 / 省界+省名锚点 / 世界国界，各含原始快照与简化产物）
 assets/                 毛毡纹理 + 5 张示例照片
-tools/                  一次性数据加工脚本（省界简化、省名锚点、世界国界简化、HEIC 转码）
+tools/                  一次性数据加工脚本（省界简化、省名锚点、世界国界简化、HEIC 转码）+ 文档体检
 test/                   CDP 自动化测试，全部可复跑
 docs/                   需求 / 记录 / 验收 / 截图
 ```
