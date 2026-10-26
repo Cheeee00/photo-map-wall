@@ -129,3 +129,21 @@
 
 - **`npx ... | Select-Object` 会把 node 的 stderr 吞成一行 `NativeCommandError`**，看不到真正的失败原因。改成 `cmd /c "npx ... > %TEMP%\log 2>&1"` 才拿到完整输出 —— 而实际是**部署成功**，只是 PowerShell 把 stderr 当异常报了。
 - Pages 说「Uploaded 0 files (1 already uploaded)」是**正常去重**（内容哈希未变），不代表没部署；判据要看 `Deployment complete` 的 URL + 线上内容哈希。
+---
+
+## R13 · 2026-10-27 · 刷新不丢照片（IndexedDB）
+
+| # | 动作 | 关键点 |
+|---|---|---|
+| 1 | `src/index.template.html` 新增 IndexedDB 层 | `DB_NAME='photo-map-wall'`、`STORE='photos'`、`keyPath:'uid'`；`openDB()` 单例 + `idbRun(mode, fn)` 统一包装，任何一步失败返回 `null` |
+| 2 | 存的是**原图 Blob**，不是 base64 | 省 1/3 体积；复原时用 `FileReader` 读回 dataURL，导出的序列化链路与刚上传时完全一致 |
+| 3 | 四个写入点 | 加照片 `savePhotoRec(p, file)` / 拖针 `patchPhotoRec(p)`（只更新经纬度，不重存 Blob）/ 改城市 `patchPhotoRec` / 删照片 `dropPhotoRec(uid)` |
+| 4 | 开机复原 | `boot()` 末尾 `restoreFromDB()`：没有记录就继续放示例；有就替换 `photos` 并 `renderPhotos + resetView`，再提示「已恢复上次的 N 张」 |
+| 5 | 「示例」按钮 = 清空 | `clearRecs()` 后再 `useDemo()`，避免下次打开又被旧记录复活 |
+| 6 | 测试 | `test/cdp-persist.mjs`（自带静态服务器，走 `http://` 才有持久配额） |
+
+**踩到的坑**
+
+- **`file://` 是不透明源，没有 IndexedDB 持久配额**。双击打开时持久化会静默失效，线上 `https://` 正常。所以持久化测试必须自带 HTTP 服务器，不能像其它用例那样直接 `file://`。这也是为什么代码里所有 IDB 调用一律 `catch → null`：不能因为存不了就把页面搞崩。
+- **第一个断言就错在 import 上**：`launch/sleep` 在 `test/_cdp.mjs`，`ROOT/IMGS15` 在 `test/_env.mjs`，混在一个 `import` 里会直接 `SyntaxError`（ESM 不给你运行时才发现的余地）。
+- 存 Blob 而不是 dataURL 还有一个隐性好处：`patchPhotoRec` 改地点时只需 `get → 改三个字段 → put`，不用把几 MB 的 base64 重新写一遍。
