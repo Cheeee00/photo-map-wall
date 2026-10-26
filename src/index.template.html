@@ -224,6 +224,7 @@
   <div class="row">
     <select class="gsel" id="selScope" title="地图范围">
       <option value="cn" selected>中国</option>
+      <option value="world">全球</option>
     </select>
     <select class="gsel" id="selGran" title="缩放粒度">
       <option value="all" selected>粒度：全部</option>
@@ -279,6 +280,8 @@
 //__CHINA_DATA__
 
 //__PROV_DATA__
+
+//__WORLD_DATA__
 
 // 城市表（lon, lat）
 const CITIES = [
@@ -410,7 +413,8 @@ function buildBoard() {
 let baseView = null;          // 中国全览基准变换
 let coreUV = null;            // 用于基准适配的 uv 范围
 let scsUV = null;             // 南海诸岛 inset 用的多边形
-const provUV = [];            // 每省投影后的多边形 + 包围盒
+let provUV = [];              // 每省投影后的多边形 + 包围盒
+let worldUV = [];             // 全球档：所有国家投影后的多边形
 
 function toUVPolys(polys) {
   return polys.map(function (poly) {
@@ -468,14 +472,26 @@ function buildCard() {
   coreUV = chinaUV.filter(function (poly) { return mercLatOf(uvBounds([poly]).v0) > 17; });
   scsUV = chinaUV.filter(function (poly) { return mercLatOf(uvBounds([poly]).v0) <= 21; });
 
-  // 省界
-  for (let i = 0; i < PROVINCES.length; i++) {
-    const uv = toUVPolys(PROVINCES[i].polys);
-    provUV.push({ name: PROVINCES[i].name, uv: uv, b: uvBounds(uv) });
+  // 省界（只在「中国」档需要）
+  if (scope === 'cn') {
+    for (let i = 0; i < PROVINCES.length; i++) {
+      const uv = toUVPolys(PROVINCES[i].polys);
+      provUV.push({ name: PROVINCES[i].name, uv: uv, b: uvBounds(uv) });
+    }
+  }
+
+  // 全球档：陆地 = 所有国家的轮廓；中国档：陆地 = 中国核心环
+  worldUV.length = 0;
+  if (scope === 'world') {
+    for (let i = 0; i < WORLD.length; i++) {
+      const uvs = toUVPolys(WORLD[i].p.map(function (r) { return [r]; }));
+      for (let j = 0; j < uvs.length; j++) worldUV.push(uvs[j]);
+    }
   }
 
   // 地图件：一块切好的实心料，直接钉在毛毡上（无纸卡、无框线、无四角钉）
-  const landD = polysPath(coreUV);
+  const landPolys = scope === 'world' ? worldUV : coreUV;
+  const landD = polysPath(landPolys);
 
   // 地图内容整体受 view 变换 —— 缩放时地图、省界、省名一起动
   layerMapContent = el('g', { id: 'mapContent' }, layerCard);
@@ -488,23 +504,39 @@ function buildCard() {
   // 主体
   el('path', { d: landD, fill: '#E9CE87', 'fill-rule': 'nonzero' }, layerMapContent);
 
-  // 省界
-  let pd = '';
-  for (let i = 0; i < provUV.length; i++) pd += polysPath(provUV[i].uv);
-  el('path', { d: pd, fill: 'none', stroke: '#C6A65C', 'stroke-width': 1.0, 'stroke-linejoin': 'round',
-               opacity: 0.85, 'vector-effect': 'non-scaling-stroke' }, layerMapContent);
-  // 国界
-  el('path', { d: landD, fill: 'none', stroke: '#A07C33', 'stroke-width': 2.0,
-               'stroke-linejoin': 'round', 'stroke-linecap': 'round',
-               'vector-effect': 'non-scaling-stroke', opacity: 0.95 }, layerMapContent);
+  if (scope === 'cn') {
+    // 省界
+    let pd = '';
+    for (let i = 0; i < provUV.length; i++) pd += polysPath(provUV[i].uv);
+    el('path', { d: pd, fill: 'none', stroke: '#C6A65C', 'stroke-width': 1.0, 'stroke-linejoin': 'round',
+                 opacity: 0.85, 'vector-effect': 'non-scaling-stroke' }, layerMapContent);
+    // 国界
+    el('path', { d: landD, fill: 'none', stroke: '#A07C33', 'stroke-width': 2.0,
+                 'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+                 'vector-effect': 'non-scaling-stroke', opacity: 0.95 }, layerMapContent);
+  } else {
+    // 国界：全球档下国界线就是「每块陆地的轮廓」，细一档，中国那块加粗
+    el('path', { d: landD, fill: 'none', stroke: '#C6A65C', 'stroke-width': 0.9,
+                 'stroke-linejoin': 'round', 'vector-effect': 'non-scaling-stroke',
+                 opacity: 0.9 }, layerMapContent);
+    el('path', { d: polysPath(coreUV), fill: 'none', stroke: '#A07C33', 'stroke-width': 1.8,
+                 'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+                 'vector-effect': 'non-scaling-stroke', opacity: 0.95 }, layerMapContent);
+  }
 
   // 针的图层（卡片内，不随地图缩放）
   layerPins = el('g', { id: 'mapPins' }, layerCard);
 
 }
 
-/* 省名：只给放得下的省画，字随缩放一起变大（像印在这块料上） */
+/* 当前范围要框住的 uv 范围：中国档 = 中国核心环；全球档 = 所有陆地 */
+function scopeBounds() {
+  return uvBounds(scope === 'world' ? worldUV : coreUV);
+}
+
+/* 地名标注：中国档画省名，全球档画国名。都随缩放一起变大（像印在这块料上） */
 function buildProvinceLabels() {
+  if (scope === 'world') { buildWorldLabels(); return; }
   const fs0 = 10.6 / baseView.s;         // 基准字号（uv 单位）≈ 10.6px
   // 小画布（手机竖屏）上地图只有五百来像素宽，全画 35 个省名会糊成一团：
   // 只留面积最大的若干个，宁可少画也别画成噪点。
@@ -538,6 +570,69 @@ function buildProvinceLabels() {
 
 function mercLatOf(v) { return Math.atan(Math.sinh(-v * D2R)) / D2R; }
 
+/* 国名：只画放得下的（`r` 是国家外接框短边的一半，度）。
+   全球档下中国相对变小，所以门槛比省名更严一点，宁可少画也别糊成噪点。 */
+function buildWorldLabels() {
+  const fs0 = 10.6 / baseView.s;
+  const small = BW < 1100;
+  const minR = small ? 3.2 : 1.5;
+  const placed = [];   // 已放下的标签框（uv 单位），后放的撞上就跳过，别叠成一坨
+  // 面积大的先占位：欧洲挤成一团时，德国的名字不该被卢森堡挤掉
+  const order = [];
+  for (let i = 0; i < WORLD.length; i++) {
+    const w = WORLD[i];
+    if (w.n && w.r >= minR) order.push(i);
+  }
+  order.sort(function (a, b) { return WORLD[b].r - WORLD[a].r; });
+  for (let k = 0; k < order.length; k++) {
+    const w = WORLD[order[k]];
+    const uv = proj(w.l[0], w.l[1]);
+    const name = w.n;
+    const byWidth = (1.7 * w.r) / Math.max(1, name.length);
+    let fs = Math.min(fs0, byWidth);
+    if (fs < fs0 * 0.42) continue;
+    const node = textNode(name, {
+      x: nf(uv[0]), y: nf(uv[1] + fs * 0.36), 'text-anchor': 'middle',
+      'font-size': nf(fs), 'font-family': "'PingFang SC','Microsoft YaHei',sans-serif",
+      fill: '#7C5D1D', opacity: 0.9, 'letter-spacing': nf(fs * 0.05)
+    }, layerMapContent);
+    // 撞了就「先挪、再缩」，都救不回来才删：挤成一团时法国/埃及不能消失
+    const offs = [[0, 0], [0, -0.9], [0, 0.9], [-1.0, 0], [1.0, 0],
+      [-0.9, -0.9], [0.9, -0.9], [0, -1.7], [0, 1.7], [-1.8, 0], [1.8, 0]];
+    const scales = [1, 0.86, 0.74, 0.64];
+    let ok = null;
+    for (let s = 0; s < scales.length && !ok; s++) {
+      if (scales[s] !== 1) {
+        node.setAttribute('font-size', nf(fs * scales[s]));
+        node.setAttribute('letter-spacing', nf(fs * scales[s] * 0.05));
+      }
+      let bb = null;
+      try { bb = node.getBBox(); } catch (e) { bb = null; }
+      if (!bb || bb.width < 1) break;
+      const pad = bb.height * 0.10;
+      for (let o = 0; o < offs.length; o++) {
+        const dx = offs[o][0] * bb.width, dy = offs[o][1] * bb.height;
+        const x = bb.x + dx, y = bb.y + dy;
+        const hit = placed.some(function (r) {
+          return x - pad < r.x + r.w && x + bb.width + pad > r.x &&
+            y - pad < r.y + r.h && y + bb.height + pad > r.y;
+        });
+        if (!hit) { ok = { dx: dx, dy: dy, bb: bb, s: scales[s] }; break; }
+      }
+    }
+    if (!ok) {
+      // 缩到 0.64 还放不下 → 太小了没意义，宁可不出
+      node.remove();
+      continue;
+    }
+    if (ok.dx || ok.dy) {
+      node.setAttribute('x', nf(uv[0] + ok.dx));
+      node.setAttribute('y', nf(uv[1] + fs * ok.s * 0.36 + ok.dy));
+    }
+    placed.push({ x: ok.bb.x + ok.dx, y: ok.bb.y + ok.dy, w: ok.bb.width, h: ok.bb.height });
+  }
+}
+
 
 /* 卡片局部 → 画布坐标（考虑 -1.2° 旋转） */
 function cardToBoard(x, y) {
@@ -561,7 +656,49 @@ let selectedUid = 0;
 let view = { s: 1, tx: 0, ty: 0 };     // 地图内容变换
 let tweenToken = null;
 
-const MIN_LON = 73.0, MAX_LON = 136.0, MIN_LAT = 16.2, MAX_LAT = 54.0;
+/* 地图范围：cn = 只画中国；world = 画全世界（出国照片才有意义的位置） */
+let scope = 'cn';
+/* 拖动大头针时坐标的允许范围：中国档收在国内，全球档放开到整个世界 */
+const CN_BOX   = { lon0: 73.0,  lon1: 136.0, lat0: 16.2, lat1: 54.0 };
+const WLD_BOX  = { lon0: -179.9, lon1: 179.9, lat0: -55.0, lat1: 77.0 };
+function scopeBox() { return scope === 'world' ? WLD_BOX : CN_BOX; }
+function clampLon(v) { const b = scopeBox(); return clamp(v, b.lon0, b.lon1); }
+function clampLat(v) { const b = scopeBox(); return clamp(v, b.lat0, b.lat1); }
+/* 某点是否落在中国境内（用国界多边形判断，避免「出国了却算成中国某省」） */
+function inChina(lon, lat) {
+  const polys = CHINA_POLYGONS;
+  for (let a = 0; a < polys.length; a++) {
+    let hit = false;
+    for (let b = 0; b < polys[a].length; b++) if (pipRing(polys[a][b], lon, lat)) hit = !hit;
+    if (hit) return true;
+  }
+  return false;
+}
+/* 全球档：点在哪国（用简化后的世界国界；找不到就返回 null） */
+const WORLD_BOX = [];      // 每个国家的包围盒，先粗筛再逐点判
+function worldPrep() {
+  if (WORLD_BOX.length) return;
+  for (let i = 0; i < WORLD.length; i++) {
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    const ps = WORLD[i].p;
+    for (let a = 0; a < ps.length; a++) for (let b = 0; b < ps[a].length; b++) {
+      const q = ps[a][b];
+      if (q[0] < u0) u0 = q[0]; if (q[0] > u1) u1 = q[0];
+      if (q[1] < v0) v0 = q[1]; if (q[1] > v1) v1 = q[1];
+    }
+    WORLD_BOX.push({ u0: u0, u1: u1, v0: v0, v1: v1 });
+  }
+}
+function countryOf(lon, lat) {
+  worldPrep();
+  for (let i = 0; i < WORLD.length; i++) {
+    const b = WORLD_BOX[i];
+    if (lon < b.u0 || lon > b.u1 || lat < b.v0 || lat > b.v1) continue;
+    const ps = WORLD[i].p;                    // 每个国家 = 若干独立外环
+    for (let a = 0; a < ps.length; a++) if (pipRing(ps[a], lon, lat)) return WORLD[i].n;
+  }
+  return null;
+}
 
 /* --------------------------------------------------------- 地图变换应用 --- */
 function applyView() {
@@ -588,7 +725,7 @@ function computePinCard() {
   const placed = [];
   for (let i = 0; i < photos.length; i++) {
     const p = photos[i];
-    const uv = proj(p.lon, p.lat);
+    const uv = proj(clampLon(p.lon), clampLat(p.lat));
     const x0 = uv[0] * view.s + view.tx, y0 = uv[1] * view.s + view.ty;
     let x = x0;
     for (let k = 1; k <= 12; k++) {
@@ -1150,8 +1287,8 @@ function onPinMove(ev) {
   const c = boardToCard(b[0], b[1]);
   const u = (c[0] - view.tx) / view.s;
   const v = (c[1] - view.ty) / view.s;
-  const lat = clamp(Math.atan(Math.sinh(-v * D2R)) / D2R, MIN_LAT, MAX_LAT);
-  const lon = clamp(u, MIN_LON, MAX_LON);
+  const lat = clamp(Math.atan(Math.sinh(-v * D2R)) / D2R, scopeBox().lat0, scopeBox().lat1);
+  const lon = clampLon(u);
   if (Math.abs(lat - p.lat) < 1e-6 && Math.abs(lon - p.lon) < 1e-6) return;
   p.lon = lon; p.lat = lat; p.locked = true;
   syncPins();
@@ -1446,6 +1583,8 @@ function useDemo() {
       locked: false, demo: true
     });
   });
+  // 示例照片全在国内 → 范围回到「中国」，别停在上一次的全球档
+  if (scope !== 'cn') setScope('cn', false);
   renderPhotos();
   resetView(true);
   syncGranState();
@@ -1579,6 +1718,10 @@ async function restoreFromDB() {
   }
   if (!out.length) return 0;
   photos = out;
+  // 恢复出来的照片有出国的 → 地图范围也得跟着切，否则针会被裁到国境线上
+  if (scope !== 'world' && out.some(function (p) { return !inChina(p.lon, p.lat); })) {
+    setScope('world', false);
+  }
   renderPhotos();
   resetView(true);
   syncGranState();
@@ -1681,6 +1824,11 @@ function shortProv(name) {
              .replace('特别行政区', '').replace('自治区', '').replace('省', '').replace('市', '');
 }
 function locateLabel(lon, lat) {
+  // 先判国界：出国的照片不能落到「最近的中国城市」上（那是明显错的）
+  if (!inChina(lon, lat)) {
+    const cn = countryOf(lon, lat);
+    if (cn && cn !== '中国') return cn;
+  }
   const nc = nearestCity(lon, lat);
   if (nc && nc.km <= 120) return nc.name;
   const pv = provinceOf(lon, lat);
@@ -1697,6 +1845,7 @@ async function addFiles(files) {
   if (wasDemo) photos = [];
 
   let bad = 0;
+  let sawOutside = false;      // 有照片落在国外 → 中国档下自动切「全球」
   for (let i = 0; i < arr.length; i++) {
     const url = await readAsDataURL(arr[i]);
     const sz = await loadSize(url);
@@ -1707,8 +1856,9 @@ async function addFiles(files) {
     let gps = null;
     try { gps = parseExifGps(await arr[i].arrayBuffer()); } catch (e) { gps = null; }
     if (gps) {
-      p.lon = clamp(gps.lon, MIN_LON, MAX_LON);
-      p.lat = clamp(gps.lat, MIN_LAT, MAX_LAT);
+      // 存真实经纬度（不裁到国内，否则出国的照片会全挤到国境线上）
+      p.lon = gps.lon; p.lat = gps.lat;
+      if (!inChina(p.lon, p.lat)) sawOutside = true;
       p.city = locateLabel(p.lon, p.lat);
       p.gps = true;
       p.locked = true;
@@ -1721,10 +1871,12 @@ async function addFiles(files) {
     savePhotoRec(p, arr[i]);          // 存本地：刷新不丢
     if (photos.length >= 40) break;
   }
+  // 有国外照片却还停在中国档：先切到全球，否则这些针会被裁到国境线上
+  if (sawOutside && scope !== 'world') setScope('world', false);
   // 首次上传：自动全览到他上传的这些地方。
   // 之后再上传：**不动视角**（用户正看着某处，替他把画面挪走是打扰），
   // 只让「适应全部」按钮闪一下，提示「视野外有新照片，想看全就点我」。
-  if (isFirst) {
+  if (isFirst || sawOutside) {
     btnFit.classList.remove('hasnew');
     fitToPins(true);   // 内部会先按终态视图重排，再补间过去
   } else {
@@ -1742,7 +1894,7 @@ async function addFiles(files) {
 }
 
 /* --------------------------------------------------- 两档选择器 --- */
-/* 一档 = 地图范围（现在只有中国；将来加「全球」在这里扩数据与 baseView）
+/* 一档 = 地图范围：中国 / 全球。换档要重画地图件与基准视图。
    二档 = 缩放粒度：全部 / 省 / 城市。它只决定 fitPinsTarget 框多大，
           不改变墙本身。 */
 const selScope = document.getElementById('selScope');
@@ -1750,9 +1902,19 @@ const selGran = document.getElementById('selGran');
 let granMode = 'all';        // all | prov | city
 
 selScope.addEventListener('change', function () {
-  // 目前只有「中国」一项：换档等同回到该范围的基准视图
-  resetView(true);
+  setScope(selScope.value, true);
 });
+
+/* 换地图范围：重画地图件 → 重算基准 → 回到基准视图（照片沿用） */
+function setScope(v, animated) {
+  const next = v === 'world' ? 'world' : 'cn';
+  const changed = next !== scope;
+  scope = next;
+  selScope.value = next;
+  if (!changed) { resetView(animated); return; }
+  rebuildCanvas();          // 内部重算 baseView / 省名 / 世界标注
+  resetView(animated);
+}
 
 selGran.addEventListener('change', function () {
   granMode = selGran.value;
@@ -1947,7 +2109,7 @@ function rebuildCanvas() {
   buildPhotosLayer();
   bindMapInteractions();
 
-  baseView = fitTo(uvBounds(coreUV), CARD.w, CARD.h, 16);
+  baseView = fitTo(scopeBounds(), CARD.w, CARD.h, 16);
   buildProvinceLabels();
   applyView();
   if (photos.length) renderPhotos();
@@ -1965,7 +2127,7 @@ function boot() {
   bindMapInteractions();
 
   // 基准：中国核心范围适配进卡片
-  baseView = fitTo(uvBounds(coreUV), CARD.w, CARD.h, 16);
+  baseView = fitTo(scopeBounds(), CARD.w, CARD.h, 16);
   view = { s: baseView.s, tx: baseView.tx, ty: baseView.ty };
 
   // 省名依赖 baseView 定字号，必须放在基准算好之后
