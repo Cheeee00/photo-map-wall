@@ -17,6 +17,23 @@ fs.mkdirSync(SHOTS, { recursive: true });
 const VW = Number(process.argv[2] || 393);
 const VH = Number(process.argv[3] || 852);
 
+// R13 之后照片存在 IndexedDB 里 —— 不清 profile 的话，上一轮传的 1 张会被复原，
+// 这一轮「只有 1 张照片」的断言就会凭空多出照片。
+fs.rmSync(TMP, { recursive: true, force: true });
+fs.mkdirSync(TMP, { recursive: true });
+
+// 上一次跑如果被中断，Chrome 还占着端口，新起的那只绑不上、我们会连到旧的那只然后 evaluate 卡死。
+try {
+  const r = await fetch(`http://127.0.0.1:${PORT}/json/version`, { signal: AbortSignal.timeout(800) });
+  if (r.ok) {
+    const v = await r.json();
+    const bws = new WebSocket(v.webSocketDebuggerUrl);
+    await new Promise((ok) => { bws.onopen = ok; bws.onerror = ok; });
+    try { bws.send(JSON.stringify({ id: 1, method: 'Browser.close' })); } catch (e) { }
+    await sleep(600);
+  }
+} catch (e) { /* 端口没人听，正常 */ }
+
 const chrome = spawn(CHROME, [
   '--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${TMP}`,
   `--window-size=${VW},${VH}`, '--hide-scrollbars', '--no-first-run',
