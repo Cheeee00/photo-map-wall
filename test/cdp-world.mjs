@@ -6,7 +6,7 @@
 //   1. 默认中国档：基准视图 = 中国全览，地图范围下拉有两个选项
 //   2. 切「全球」：地图件重画、基准视图变宽、省名换国名、照片排布仍 0 交叉
 //   3. 上传 4 张国外 GPS 照片（巴黎/东京/纽约/悉尼）：
-//      → 地点认成 法国/日本/美国/澳大利亚（不是「最近的中国城市」）
+//      → 标签认成 巴黎/东京/纽约/悉尼（城市名，不是「最近的中国城市」），国家记在 p.cc
 //      → 自动从中国档切到全球档
 //      → 针落在各自的经纬度上（不是被裁到国境线）
 //   4. 再切回中国档：不崩、仍 0 交叉（国外照片被裁到国内也不许炸）
@@ -97,10 +97,17 @@ try {
   await t.setFiles('#file', files);
   await t.sleep(2200);
   const st2 = await t.evaluate('window.__selfTest()');
-  const got = await t.evaluate('window.__dbg.photos().map(p=>({c:p.city,lon:p.lon,lat:p.lat,gps:!!p.gps}))');
+  const got = await t.evaluate('window.__dbg.photos().map(p=>({c:p.city,cc:p.cc,lon:p.lon,lat:p.lat,gps:!!p.gps}))');
   const scope2 = await t.evaluate('document.getElementById("selScope").value');
   t.ok('5 张全部识别为有 GPS', got.length === 5 && got.every((p) => p.gps), JSON.stringify(got.map((p) => p.c)));
-  for (const [nm, lat, lon, want] of FOREIGN.concat(DOMESTIC)) {
+  // 国外照片的标签是「城市名」（90km 内取最近城市，比落到国家更准），
+  // 国家单独记在 cc 里 —— 大洲/国家粒度取景靠它。
+  for (const [nm, lat, lon, want] of FOREIGN) {
+    const p = got.find((q) => q.c === nm);
+    t.ok(nm + ' → 标签用城市名', !!p, got.map((q) => q.c).join(','));
+    t.ok(nm + ' → 国家记作 ' + want, !!p && p.cc === want, p ? p.cc : '(没有这张)');
+  }
+  for (const [nm, lat, lon, want] of DOMESTIC) {
     const p = got.find((q) => q.c === want);
     t.ok(nm + ' → ' + want, !!p, got.map((q) => q.c).join(','));
   }
