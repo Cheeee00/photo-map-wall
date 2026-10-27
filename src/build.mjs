@@ -63,3 +63,12 @@ console.log('wrote', path.relative(ROOT, outPath) || outPath,
   '| bytes =', Buffer.byteLength(out),
   '| demo photos =', demo.length,
   '| demo bytes =', demo.reduce((s, d) => s + d.uri.length, 0));
+
+// 部署目录也跟着更新：少了这一步，「本地是新的、线上是旧的、测试打的是 dist 里的旧文件」
+// 这个坑每次都会踩。只要 dist/ 存在就顺手写一份。
+const distDir = R('dist');
+if (!process.argv[2] && fs.existsSync(distDir)) {
+  fs.writeFileSync(path.join(distDir, 'index.html'), out, 'utf8');
+  console.log('wrote dist/index.html（部署目录已同步）');
+}
+
