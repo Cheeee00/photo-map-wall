@@ -27,11 +27,15 @@ for (const md of MDS) {
   const codes = [...text.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]);
   for (const c of codes) {
     if (!/[/\\]/.test(c)) continue;
-    if (!/\.(mjs|js|md|jpg|png|json|html|py|geojson|ps1|txt)$/.test(c)) continue;
-    if (/^(node|npm|npx|python|git|cd|docker|wrangler)\s/.test(c)) continue;   // 命令行不是路径
-    if (/^[A-Za-z]:/.test(c) || c.startsWith('<') || c.includes('*')) continue;
-    if (FUTURE.has(c)) continue;
-    if (!exists(c)) { console.log(`PATH   ${md}: ${c}`); bad++; }
+    // 命令行：不校验整条命令，但把它指向的仓库文件拿出来校验。
+    // （以前这里直接 continue，于是 README 列了两个早就不存在的测试脚本，体检照样通过。）
+    const cmd = /^(node|npm|npx|python|git|cd|docker|wrangler)\s+(.+)$/.exec(c);
+    const target = cmd ? cmd[2].trim().split(/\s+/)[0] : c;
+    if (cmd && /^(--|run$|run\s|install|test$|pages|deploy|--yes)/.test(target)) continue;   // 子命令不是路径
+    if (!/\.(mjs|js|md|jpg|png|json|html|py|geojson|ps1|txt)$/.test(target)) continue;
+    if (/^[A-Za-z]:/.test(target) || target.startsWith('<') || target.includes('*')) continue;
+    if (FUTURE.has(target)) continue;
+    if (!exists(target)) { console.log(`PATH   ${md}: ${target}${cmd ? '（命令行里引用）' : ''}`); bad++; }
   }
 }
 
