@@ -34,6 +34,8 @@ for (const md of MDS) {
     if (cmd && /^(--|run$|run\s|install|test$|pages|deploy|--yes)/.test(target)) continue;   // 子命令不是路径
     if (!/\.(mjs|js|md|jpg|png|json|html|py|geojson|ps1|txt)$/.test(target)) continue;
     if (/^[A-Za-z]:/.test(target) || target.startsWith('<') || target.includes('*')) continue;
+    // $env:TEMP\x.js / %TEMP%\x.js 是临时路径，不在仓库里
+    if (/[$%]/.test(target)) continue;
     if (FUTURE.has(target)) continue;
     if (!exists(target)) { console.log(`PATH   ${md}: ${target}${cmd ? '（命令行里引用）' : ''}`); bad++; }
   }
@@ -55,17 +57,29 @@ bad += stale.length;
 const tpl = fs.readFileSync(path.join(ROOT, 'src/index.template.html'), 'utf8');
 const cityM = /const CITIES\s*=\s*\[([\s\S]*?)\n\];/.exec(tpl);
 const cityN = cityM ? (cityM[1].match(/\[\s*'/g) || []).length : -1;
-const cityClaim = /(\d+)\s*个城市/.exec(readme);
-if (cityClaim && Number(cityClaim[1]) !== cityN) {
-  console.log(`CITY   README 说 ${cityClaim[1]} 个城市，代码里有 ${cityN} 个  ← 不一致`);
+// 两张表要分开比：代码里的 CITIES 是中国常用城市表，data/cities.js 是世界城市表。
+// （以前只认「N 个城市」，README 先提到世界表的 1018，就被拿去和中国的 39 比，直接报不一致。）
+const cnClaim = /(\d+)\s*个常用城市/.exec(readme);
+if (cityM && cnClaim && Number(cnClaim[1]) !== cityN) {
+  console.log(`CITY   中国常用城市：README 说 ${cnClaim[1]} 个，代码里 ${cityN} 个  ← 不一致`);
   bad++;
 } else if (cityM) {
-  console.log(`CITY   城市表 ${cityN} 条，README ${cityClaim ? '说 ' + cityClaim[1] + ' 个  ✓' : '未标数（跳过）'}`);
+  console.log(`CITY   中国常用城市 ${cityN} 条，README ${cnClaim ? '说 ' + cnClaim[1] + ' 个  ✓' : '未标数（跳过）'}`);
+}
+const cwSrc = fs.readFileSync(path.join(ROOT, 'data/cities.js'), 'utf8');
+const cwN = (cwSrc.match(/\[\s*["']/g) || []).length;
+const cwClaim = /(\d+)\s*城\s*\/\s*\d+\s*国/.exec(readme);
+const cwNum = cwClaim ? Number(cwClaim[1]) : 0;
+if (cwNum && cwNum !== cwN) {
+  console.log(`CITY   世界城市：README 说 ${cwNum} 个，data/cities.js 里 ${cwN} 个  ← 不一致`);
+  bad++;
+} else {
+  console.log(`CITY   世界城市 ${cwN} 条，README ${cwNum ? '说 ' + cwNum + ' 个  ✓' : '未标数（跳过）'}`);
 }
 
 // 4) 占位符数量：build.mjs 里实际替换几个，README 说几个
 const build = fs.readFileSync(path.join(ROOT, 'src/build.mjs'), 'utf8');
-const ph = [...new Set([...build.matchAll(/'(\/\/__[A-Z_]+__|"__[A-Z_]+__"|\/\*__[A-Z_]+__\*\/\[\])/g)].map((m) => m[1]))];
+const ph = [...new Set([...build.matchAll(/'(\/\/__[A-Z_]+__|"__[A-Z_]+__"|\/\*__[A-Z_]+__\*\/\[\]|const [A-Z_]+ = \/\*__[A-Z_]+__\*\/\[\])/g)].map((m) => m[1]))];
 const claim = /把([一二三四五六七八九十])个占位符/.exec(readme);
 const cn = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
 console.log(`PLACE  build.mjs 里 ${ph.length} 个：${ph.join(' ')}；README 说「${claim ? claim[1] : '?'}个」${claim && cn[claim[1]] === ph.length ? '  ✓' : '  ← 不一致'}`);
