@@ -181,7 +181,8 @@ try {
     const pw = buf.readUInt32BE(16), ph = buf.readUInt32BE(20);
     const canvas = JSON.parse(await t.evaluate('JSON.stringify(__dbg.canvas())'));
     const wantRatio = canvas.bw / canvas.bh;
-    t.ok('F 导出（' + name + '）：高度 1200', ph === 1200, pw + '×' + ph);
+    /* 导出基准高 1200 × 2（EXPORT_SCALE）；很大的画布会被 EXPORT_MAX_PX 等比收下来，所以只断言「不低于 1200」、高宽比另行验证 */
+    t.ok('F 导出（' + name + '）：长边不低于 1200', ph >= 1200 && Math.max(pw, ph) >= 1200, pw + '×' + ph);
     t.ok('F 导出（' + name + '）：宽高比=画布比', Math.abs(pw / ph - wantRatio) / wantRatio < 0.01,
       'png ' + (pw / ph).toFixed(4) + ' vs 画布 ' + wantRatio.toFixed(4));
     t.ok('F 导出（' + name + '）：文件不是空的', buf.length > 200000, (buf.length / 1048576).toFixed(2) + ' MB');
