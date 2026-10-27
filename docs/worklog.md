@@ -243,3 +243,27 @@
 - 测试断言写错过两次：①「国家档比大洲档细」在照片全球撒开时不成立（俄罗斯/美国跨洲，外接框几乎等于全世界），必须用**同一大洲**的三张照片才测得出层级；②「国家档比全部粗」不成立（法国世界边界含海外省，圭亚那在 -53°）。层级只在 大洲 ⊃ 国家 ⊃ 城市 之间成立。
 - `test/cdp-sync.mjs` 里「服务端存了原图字节」这句已经是假话（现在存的是压缩版），改成「存的是压过的中等尺寸版本」并加 `≤1.5 MB && t==='image/jpeg'` 判据。
 - 诊断脚本必须放 `test/` 目录（放 `%TEMP%` 里 `import './_cdp.mjs'` 会 `ERR_MODULE_NOT_FOUND`）；`launch()` 不导航，清 IndexedDB 前得先 `await t.goto()`。
+
+## R16 收尾 · 2026-10-28 · 导出 2× / 云端压缩 / server 入库 / 截图自动化 / 部署
+
+承接上面 R16 那节（那条只写到第 ④ 项的一半）。这一节补的是后半程：
+
+| 步骤 | 做了什么 | 脚本 / 位置 |
+|---|---|---|
+| 1 | 导出改成 2× 出厂：`EXPORT_H 1200` × `EXPORT_SCALE 2`，`EXPORT_MAX_PX 3.2e7` 等比兜底，`EXPORT_SS_MAX_PX 1.4e7` 以上不再超采样 | `src/index.template.html` 导出段 |
+| 2 | 提示文案跟着实际走的路径变（真做了超采样才说做了） | 同上 |
+| 3 | HEIC 说法拆成两句：`isHeicFile()` 认 `ftyp` brand，非 HEIC 的解不开单独说「文件可能损坏或格式不支持」 | `src/index.template.html` |
+| 4 | 云端只存压缩版：`shrinkForCloud()` 长边 1600 / JPEG 0.8，`syncPutPhoto` 优先用它 | `src/index.template.html` 云同步模块 |
+| 5 | NAS 备份服务收进仓库（含 Dockerfile、package.json、安全测试） | `server/` |
+| 6 | 修 `test/security.test.mjs` 在 Windows 上启动超时：`new URL('..', import.meta.url).pathname` 是 percent-encoded（仓库路径含中文），改用 `fileURLToPath` | `server/test/security.test.mjs` |
+| 7 | 配图不再手截：`tools/make_docs_shots.mjs` 用 `assets/demo5` 真照片注入演示坐标，自动出 01–07 | `tools/make_docs_shots.mjs` |
+| 8 | 体检规则收紧：占位符正则认 `const X = /*__X__*/[];` 整行形态；城市表按「中国 39 / 世界 1018」分开比；跳过 `$env:`/`%TEMP%` 这种 shell 变量 | `tools/check_docs.mjs` |
+| 9 | 新增 `tools/check_github.mjs`：重拉 tree API 逐文件比大小，取代「信 gh_push 的 summary」 | `tools/check_github.mjs` |
+| 10 | `.gitignore` 把原始快照（`*_raw.geojson` / `china_boundary*.json`）排除，仓库 33 MB → 3.4 MB | `.gitignore` |
+
+**踩的坑（三条，都是这次新踩的）**
+- `gh_push.ps1` 的 `summary: added=N updated=M skipped=K` **不能当验收**：N+M+K 常常不等于 staged 文件数，且「updated=2」也可能没真落地。唯一可信的是重拉 tree API 逐文件比大小（`tools/check_github.mjs`）。这次就是这样发现 `functions/api/wall/[[path]].js` 根本没上传。
+- 文件名含方括号时，`Copy-Item` 会当通配符把 `[[path]].js` 匹配掉 → 必须 `-LiteralPath`。这就是上一个坑的成因。
+- Node 24 的全局 `fetch` 在进程退出时会在 libuv 里断言失败（`UV_HANDLE_CLOSING` / 0xC0000409），**退出码被改成 1**，看起来跟「核对失败」一模一样。`check_github.mjs` 改走 `curl.exe` 后退出码才正常。
+
+**实测**：`tools/check_docs.mjs` 通过；`tools/check_github.mjs` → 82/82 一致 ✅；`test/api-cloud.mjs` 打新部署 20/20；`test/cdp-live.mjs` 打自定义域 17/17；14 个 CDP 脚本全绿（stability 37/37、reorder 17/17、world 26/26、gran 16/16、sync 28/28、persist 21/21、ux 28/28、ux2 21/21、mobile 通过）。
