@@ -9,6 +9,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -34,11 +35,17 @@ const local = new Map(localList);
 const tokenFile = 'C:/Users/ChenLong/.dsh/secrets/github-token-full.txt';
 const token = fs.readFileSync(tokenFile, 'utf8').trim();
 
-const res = await fetch(`https://api.github.com/repos/${REPO}/git/trees/${BRANCH}?recursive=1`, {
-  headers: { Authorization: 'Bearer ' + token, 'User-Agent': 'photo-map-wall-check', Accept: 'application/vnd.github+json' },
-});
-if (!res.ok) throw new Error('tree API ' + res.status + ' ' + (await res.text()).slice(0, 200));
-const tree = await res.json();
+// 走 curl：Node 24 的 fetch 结束时会在 libuv 里断言失败（UV_HANDLE_CLOSING），
+// 退出码被改成 1 / 0xC0000409，看起来跟「核对失败」一模一样。
+const out = execFileSync('curl.exe', [
+  '-s', '-x', 'http://127.0.0.1:7897',
+  '-H', 'Authorization: Bearer ' + token,
+  '-H', 'User-Agent: pmw-github-check',
+  '-H', 'Accept: application/vnd.github+json',
+  `https://api.github.com/repos/${REPO}/git/trees/${BRANCH}?recursive=1`,
+], { maxBuffer: 64 * 1024 * 1024 }).toString();
+if (/^\s*\{/.test(out) === false) throw new Error('tree API 返回不像 JSON：' + out.slice(0, 200));
+const tree = JSON.parse(out);
 if (tree.truncated) console.log('注意：tree 被截断，比对可能不全');
 
 const remote = new Map();
@@ -61,4 +68,10 @@ if (diffSize.length) console.log('大小不一致：\n  ' + diffSize.join('\n  '
 
 const ok = !onlyLocal.length && !onlyRemote.length && !diffSize.length;
 console.log(ok ? 'GitHub 与本地一致 ✅' : 'GitHub 与本地不一致 ❌');
+// 不主动关掉 undici 的 keep-alive 连接，node 退出时会在 libuv 里断言失败
+// （Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)），退出码被改成 1 —— 看着像核对失败。
+try {
+  const d = globalThis[Symbol.for('undici.globalDispatcher.1')];
+  if (d && typeof d.destroy === 'function') await d.destroy();
+} catch (e) { /* 关不掉就算了 */ }
 process.exit(ok ? 0 : 1);
