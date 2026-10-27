@@ -8,12 +8,14 @@
 //   r  = 外接框短边的一半（度），用来决定「这个国家的名字画得下吗」
 //   l  = Natural Earth 给的标注点（LABEL_X/LABEL_Y），没有就用外接框中心
 import fs from 'node:fs';
+import { SHORT, CONT_CN } from './geo_names.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const R = (...p) => path.join(ROOT, ...p);
 
+// Natural Earth 的 CONTINENT 是英文，翻成中文：大洲级取景要用
 const SRC = 'https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_110m_admin_0_countries.geojson';
 const CACHE = R('data', 'world_raw.geojson');
 const OUT = R('data', 'world.js');
@@ -91,26 +93,6 @@ const raw = await loadRaw();
 const SKIP = new Set(['Antarctica', '南极洲', 'Fr. S. Antarctic Lands', '法属南部领地']);
 
 // Natural Earth 的中文名是「官方全称」，直接印在地图上太长，改成通称
-const SHORT = {
-  '中华人民共和国': '中国',
-  '中华民国': '台湾',
-  '大韩民国': '韩国',
-  '朝鲜民主主义人民共和国': '朝鲜',
-  '阿拉伯联合酋长国': '阿联酋',
-  '波斯尼亚和黑塞哥维那': '波黑',
-  '北塞浦路斯土耳其共和国': '北塞浦路斯',
-  '刚果民主共和国': '刚果（金）',
-  '刚果共和国': '刚果（布）',
-  '中非共和国': '中非',
-  '特立尼达和多巴哥': '特立尼达',
-  '巴布亚新几内亚': '巴新',
-  '福克兰群岛': '福克兰',
-  '圣多美和普林西比': '圣多美',
-  '安提瓜和巴布达': '安提瓜',
-  '圣文森特和格林纳丁斯': '圣文森特',
-  '赤道几内亚': '赤几',
-};
-
 const countries = [];
 let rawPts = 0, outPts = 0;
 
@@ -164,6 +146,8 @@ for (const f of raw.features) {
 
   countries.push({
     n: name,
+    k: CONT_CN[pr.CONTINENT] || '',
+
     r: Math.round(Math.min(mainBB.u1 - mainBB.u0, mainBB.v1 - mainBB.v0) / 2 * 100) / 100,
     l: [Math.round(lx * 100) / 100, Math.round(ly * 100) / 100],
     p: rounded,
