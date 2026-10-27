@@ -160,7 +160,6 @@ node test/cdp-shot.mjs 1600 1000 shot.png   # 冒烟：打开、自检、截图
 node test/cdp15.mjs                         # 15 张压测：排布 + 导出落盘
 node test/cdp-cross.mjs                     # 独立复算红线交叉（不看页面自检，自己算一遍）
 node test/cdp-reflow.mjs                    # 6 种窗口尺寸下重排是否越界/裁剪
-node test/cdp-viewer.mjs                    # 大图预览、Esc 关闭、改尺寸后重排
 node test/cdp-reorder.mjs                   # 拖动排序：虚线落点、松手换位、名次持久化、自动排位恢复
 node test/cdp-mobile.mjs                    # 手机竖屏 393×852：铺满/工具条/缩放按钮/单张全览/15 张压测
 node test/cdp-ux.mjs                        # 交互契约：首次自动全览 / 二次上传不动视野 / 三档粒度 / 预览
