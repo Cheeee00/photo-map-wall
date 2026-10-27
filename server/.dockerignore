@@ -1,0 +1,7 @@
+.*
+!.gitignore
+node_modules/
+data/
+uploads/
+test/shots/
+*.local.*
