@@ -1,0 +1,15 @@
+{
+  "name": "photo-wall-backup",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "照片地图墙 —— 后台静默备份服务（原图存 NAS + 记录设备与机型）",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
