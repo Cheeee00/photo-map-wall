@@ -13,3 +13,7 @@ desktop.ini
 *.log
 dist/
 .wrangler/
+# 原始数据源快照：脚本会按需下载并缓存，不入库（README 里写明了来源与重取方式）
+data/*_raw.geojson
+data/china_boundary_full.json
+data/china_boundary.json
