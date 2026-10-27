@@ -161,15 +161,18 @@ node test/cdp-viewer.mjs                    # 大图预览、Esc 关闭、改尺
 node test/cdp-drag.mjs                      # 拖动照片：位置记忆、红线跟随、不误触预览、回原位
 node test/cdp-mobile.mjs                    # 手机竖屏 393×852：铺满/工具条/缩放按钮/单张全览/15 张压测
 node test/cdp-ux.mjs                        # 交互契约：首次自动全览 / 二次上传不动视野 / 三档粒度 / 预览
+node test/cdp-ux2.mjs                       # 交互契约（第二批）：看示例不动你的照片 / 拖动死区 / 删光不塌 / 坏文件提示
 node test/cdp-stability.mjs                 # 稳定性矩阵：12 种尺寸 × 示例与 15 张 + 改窗抖动 + 增删 + 导出
-node test/cdp-persist.mjs                   # 本地持久化：上传 → 刷新复原 → 示例清空（自带 http 服务器）
+node test/cdp-persist.mjs                   # 本地持久化：上传 → 刷新复原 → 看示例不清库（自带 http 服务器）
+node test/cdp-sync.mjs                      # 云端「同一面墙」：换设备用同步码接回（自带 wrangler pages dev）
 node test/cdp-world.mjs                     # 中国/全球两档：切档、国名、国外照片命名、自动切档、零交叉
 node test/cdp-live.mjs                      # 线上冒烟：直接打公网 URL，三档视口
+node test/api-cloud.mjs                     # 云端接口端到端：401、原图字节一致、同步码换 key、越权、413/400/404
 
-node test/test-parser.mjs       # 把页面里的 parseExifGps 抠出来，在 node 里跑 9 个样本
-node test/test-demo5.mjs        # 直接读 assets/demo5 的 5 张真实照片，确认 GPS 能解出来
+node test/exif-node.mjs         # 把页面里的 parseExifGps 抠出来，在 node 里跑 9 个样本
 node test/cdp-exif2.mjs         # 真实走一遍文件上传，确认定位落到正确城市
 
+node test/dbg-x.mjs 40 2200 1100   # 排布诊断：N 张照片在指定尺寸下的交叉数/重叠/耗时（只读，不改页面状态）
 node test/cdp-docs.mjs          # 不是断言：生成 README 里那张「全球档」截图（真照片 + 注入坐标）
 ```
 
