@@ -271,9 +271,13 @@ key 走 `x-wall-key` 头。没有账号系统，所以服务端只做「拿着�
 index.html              构建产物（唯一运行必需的文件）
 src/index.template.html 应用源码
 src/build.mjs           构建脚本
-data/                   地图数据（中国国界 / 省界+省名锚点 / 世界国界，各含原始快照与简化产物）
+data/                   地图数据（中国国界 / 省界+省名锚点 / 世界国界 / 世界城市点）
+                        —— 原始 *_raw.geojson 快照不入库，脚本会按需下载并缓存
 assets/                 毛毡纹理 + 5 张示例照片
-tools/                  一次性数据加工脚本（省界简化、省名锚点、世界国界简化、HEIC 转码）+ 文档体检
+functions/              Cloudflare Pages Function：/api/wall/*（绑 KV `WALLS`）
+server/                 可选的 NAS 原图备份服务（零依赖 Node + Docker）
+tools/                  数据加工脚本（省界简化、省名锚点、世界国界/城市、HEIC 转码）
+                        + 文档体检 check_docs.mjs、配图生成 make_docs_shots.mjs
 test/                   CDP 自动化测试，全部可复跑
 docs/                   需求 / 记录 / 验收 / 截图
 ```
