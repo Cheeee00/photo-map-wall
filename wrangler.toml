@@ -1,0 +1,18 @@
+# Cloudflare Pages 项目配置
+#
+# 这个文件让 `npx wrangler pages deploy`（不带目录参数）知道：
+#   1) 静态产物在 dist/
+#   2) /api/wall/* 的 Pages Function 需要 WALLS 这个 KV 绑定
+#
+# 绑定写在这里而不是只在控制台点，是为了让仓库本身可复现 ——
+# 换台机器 clone 下来，一条 deploy 就能得到同样的绑定。
+
+name = "photo-map-wall"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-10-26"
+
+# 云端「墙」存储：每个访客一面墙，按随机 128 位 key 隔离
+# KV 免费额度：1 GB 存储 / 每天 1000 次写 / 100,000 次读，够个人用
+[[kv_namespaces]]
+binding = "WALLS"
+id = "eab4f04774244167a836453f9079cdbb"
