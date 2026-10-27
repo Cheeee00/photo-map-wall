@@ -40,7 +40,8 @@ try {
   }
 
   await t.goto();
-  // 清场：点「示例」既清 IndexedDB 又回到示例状态，保证每次跑都是同一个起点
+  // 清场：回到示例状态。「看示例」现在只是借看（不再清 IndexedDB），
+  // 干净起点靠 _cdp.mjs 每次新建 profile 来保证。
   await t.evaluate('document.getElementById("btnDemo").click()');
   await t.sleep(700);
 
