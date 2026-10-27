@@ -111,6 +111,8 @@ npx wrangler pages deploy dist --project-name=photo-map-wall --branch=main
 
 ---
 
+构建产物 `index.html` 现在是 1,213,031 B（单文件，已内联全部地图数据、毛毡底图与 5 张示例照片）。
+
 ## 自己重新构建
 
 ```bash
@@ -118,7 +120,7 @@ node src/build.mjs              # 产出 index.html
 node src/build.mjs out.html     # 或者写到指定文件
 ```
 
-`src/build.mjs` 把五个占位符替换进 `src/index.template.html`：
+`src/build.mjs` 把六个占位符替换进 `src/index.template.html`：
 
 | 占位符 | 来源 |
 |---|---|
@@ -127,6 +129,7 @@ node src/build.mjs out.html     # 或者写到指定文件
 | `//__WORLD_DATA__` | `data/world.js` |
 | `"__FELT_URI__"` | `assets/felt-final.jpg`（base64） |
 | `/*__DEMO_DATA__*/[]` | `assets/demo5/*.jpg`（base64 + 真实 GPS） |
+| `const CITIES_W = /*__CITIES__*/[];` | `data/cities.js` |
 
 要改界面就改 `src/index.template.html`，然后重新构建 —— **不要直接改 `index.html`**，它是构建产物。
 
@@ -158,7 +161,7 @@ node test/cdp15.mjs                         # 15 张压测：排布 + 导出落�
 node test/cdp-cross.mjs                     # 独立复算红线交叉（不看页面自检，自己算一遍）
 node test/cdp-reflow.mjs                    # 6 种窗口尺寸下重排是否越界/裁剪
 node test/cdp-viewer.mjs                    # 大图预览、Esc 关闭、改尺寸后重排
-node test/cdp-drag.mjs                      # 拖动照片：位置记忆、红线跟随、不误触预览、回原位
+node test/cdp-reorder.mjs                   # 拖动排序：虚线落点、松手换位、名次持久化、自动排位恢复
 node test/cdp-mobile.mjs                    # 手机竖屏 393×852：铺满/工具条/缩放按钮/单张全览/15 张压测
 node test/cdp-ux.mjs                        # 交互契约：首次自动全览 / 二次上传不动视野 / 三档粒度 / 预览
 node test/cdp-ux2.mjs                       # 交互契约（第二批）：看示例不动你的照片 / 拖动死区 / 删光不塌 / 坏文件提示
@@ -166,6 +169,7 @@ node test/cdp-stability.mjs                 # 稳定性矩阵：12 种尺寸 × 
 node test/cdp-persist.mjs                   # 本地持久化：上传 → 刷新复原 → 看示例不清库（自带 http 服务器）
 node test/cdp-sync.mjs                      # 云端「同一面墙」：换设备用同步码接回（自带 wrangler pages dev）
 node test/cdp-world.mjs                     # 中国/全球两档：切档、国名、国外照片命名、自动切档、零交叉
+node test/cdp-gran.mjs                      # 取景粒度四档：中国 全部/省/城市、全球 全部/大洲/国家/城市
 node test/cdp-live.mjs                      # 线上冒烟：直接打公网 URL，三档视口
 node test/api-cloud.mjs                     # 云端接口端到端：401、原图字节一致、同步码换 key、越权、413/400/404
 
@@ -199,6 +203,7 @@ PMW_URL=https://wall.orange0323.dpdns.org node test/cdp-shot.mjs 1600 1000 live.
 - **中国国界 / 省界**：阿里云 [DataV.GeoAtlas](https://datav.aliyun.com/portal/school/atlas/area_selector)。`data/china_boundary.json` 是 `100000.json` 的原始快照；`data/china_coords.js` 是它经 Douglas-Peucker 简化后的版本（17 个环、1578 点，含海南、台湾与南海诸岛）；`data/provinces.js` 由 `tools/gen_provinces.mjs` 从 `100000_full.json` 生成（35 个省级面、4180 点）。
   > 地图仅用于**可视化示意与个人纪念**，不作为任何行政区划或国界的权威依据。
 - **世界国界**：[Natural Earth](https://www.naturalearthdata.com/) 110m `admin_0_countries`（public domain）。`data/world_raw.geojson` 是原始快照，`data/world.js` 由 `tools/gen_world.mjs` 生成（175 国、7083 点、约 107 KB）。**边界按该数据集划分**（台湾单列、西撒哈拉与索马里兰等按 NE 口径）；要面向更广的受众时，这套口径需要按目标重新定，不能默认沿用。
+- **世界城市**：[Natural Earth](https://www.naturalearthdata.com/) 10m `populated_places`（public domain）。`data/cities_raw.geojson` 是原始快照，`data/cities.js` 由 `tools/gen_cities.mjs` 生成（人口 ≥30 万或首都、同国同名取人口最大、每国最多 30 个 → 1018 城 / 169 国）。中文名取数据集的 `NAME_ZH`。
 - **毛毡纹理**：ambientCG 的 `Fabric034`（CC0），裁切调色后内联。
 - **示例照片**：作者本人拍摄，仅作展示样例。想换成自己的照片，改 `src/build.mjs` 里的 `DEMO_META` 再重新构建即可（改成空数组就是空墙）。
 
@@ -208,15 +213,45 @@ PMW_URL=https://wall.orange0323.dpdns.org node test/cdp-shot.mjs 1600 1000 live.
 
 ## 已知限制
 
-- **只解析 JPEG 的 EXIF GPS**。HEIC 需要先转码（`tools/heic2jpg.py`）；PNG 没有 EXIF；微信/微博转发过的图片通常已被抹掉定位，这时候只能手动选城市。用 Chrome 或微信内置浏览器打开时，iPhone 的 HEIC 解不开（不会被画出来），页面会提示改用 Safari 或转 JPEG。
-- **照片存在浏览器本地**（IndexedDB），换设备 / 换浏览器就是空的，也没有账号与分享链接。iOS Safari 的 ITP 会在 7 天不用后清掉站点数据（加到主屏除外）。
+- **只解析 JPEG 的 EXIF GPS**。PNG 没有 EXIF；微信/微博转发过的图片通常已被抹掉定位，这时候只能手动选城市（点照片改「地点」，或直接在墙上拖那枚针）。
+- **HEIC 能不能加，取决于浏览器**。Safari 自己能解 HEIF，页面会在本地转成 JPEG 继续用（用户无感）；Chrome / 微信内置浏览器解不开，页面会明确告诉你「这几张是 HEIC」，并给出三条出路（换 Safari / 相机格式改「兼容性最佳」/ 相册里分享成 JPEG）。不是 HEIC 又打不开的，会单独说成「文件可能损坏或格式不支持」，不会混为一谈。
+- **照片存在浏览器本地**（IndexedDB），换设备 / 换浏览器就是空的 —— 除了下面这条「同一面墙」。
+- **「同一面墙」跟着设备走，不跟网络走**。身份是浏览器自己生成的 128 位随机 key（localStorage + cookie 双写），所以 Wi-Fi 和流量之间切换不影响；换设备时输入 12 位同步码接回。**没有做账号**，清掉浏览器数据 + 没存同步码 = 那面墙找不回来。
+- **iOS Safari 的 ITP 会在 7 天不用后清掉站点数据**（加到主屏除外），云端那面墙不受影响，下次打开会自己拉回来。
 - **`file://` 打开时本地持久化不生效** —— 文件源是不透明源，浏览器不给持久配额。双击打开能正常用，只是刷新回示例；放到任意 `https://` 静态托管上就正常。
-- **手机上是「能用」而不是「为触屏重做」**。捏合缩放、+/− 按钮、两行工具条都有了，但没有做惯性拖动、没有做长按排序；一屏塞十几张照片时，窄屏上的拍立得会明显变小（走廊只有四条，槽位尺寸由最长那张照片决定）。
-- **iOS 上导出 PNG 的行为没有真机验证过**。导出走的是 `canvas.toBlob()` + `<a download>`，桌面 Chrome/Firefox/Edge 都能直接落盘；iOS Safari 对 blob 下载的处理历史上不统一，可能变成「新标签里打开图片」——那样长按也能存进相册，或者干脆用桌面浏览器导出。
-- **省份到城市的粒度只有 39 个城市**。没在表里的地方会显示省名 —— 宁可显示「西藏」也不编一个不存在的地名。
-- **全球档只到国家**。国外的照片写「法国」，不写「巴黎」——城市级要再内联一份世界城市表；「取景粒度」那档也仍只在中国范围内有效。
+- **云端只存压过的中等尺寸版本**（长边 1600、JPEG 0.8、约 200~400 KB），原图一直留在本机。Cloudflare KV 免费额度是 1 GB 存储 / 每天 1000 次写 / 10 万次读：传满一面 80 张的墙大约消耗 80 次写 + 若干次清单写，一天造十来面墙没问题；**长期归档原图请走 NAS**（见下）。
+- **两台设备同时编辑同一面墙会「后写覆盖」**。清单是客户端整体覆盖写的（避开 KV 的读-改-写竞态），所以并发改会丢中间状态；同一个人的多设备接力用没问题。
+- **手机上是「能用」而不是「为触屏重做」**。捏合缩放、+/− 按钮、两行工具条、拖动换位都有，但没有惯性拖动；一屏塞十几张照片时，窄屏上的拍立得会明显变小（走廊只有四条，槽位尺寸由最长那张照片决定）。
+- **导出现在是 2× 出厂**：宽高按当前画布比例算，2400 高起，超过 3200 万像素会等比收，成品大于 1400 万像素时不再做 2× 超采样（手机上双倍绘制会 OOM）。
+- **iOS 上导出的行为没有真机验证过**。导出走的是 `canvas.toBlob()` + `<a download>`，桌面 Chrome/Firefox/Edge 都能直接落盘；iOS Safari 对 blob 下载的处理历史上不统一，可能变成「新标签里打开图片」——那样长按也能存进相册，或者干脆用桌面浏览器导出。真机验证仍在 TODO。
+- **手边没有城市的地方显示上一级**。中国境内按 39 个常用城市就近判（≤120 km 用城市名，否则省名）；全球档按 1018 个城市判（≤90 km 用城市名，否则国家名）。宁可显示「西藏」「法国」，也不编一个不存在的地名。
 - **世界边界的口径来自 Natural Earth**。这是英文世界常见的数据集（台湾单列、索马里兰单列等）。个人纪念用没问题，但如果这个页面要给更广的人用，边界口径必须按目标受众重新定。
-- **导出是光栅化 PNG**，不是矢量 PDF；画布越高清，导出越慢。
+- **导出是光栅化 PNG**，不是矢量 PDF；画布越高清、照片越多，导出越慢。
+
+### 云端额度与 NAS 的分工
+
+| | 存什么 | 额度/寿命 | 用途 |
+|---|---|---|---|
+| 浏览器 IndexedDB | 原图 + 名次 + 经纬度 | 受 ITP 7 天限制 | 日常交互、导出（始终用原图） |
+| Cloudflare KV | 长边 1600 的 JPEG | 1 GB / 每天 1000 写 | 换设备接回、跨设备看到同一面墙 |
+| NAS（可选） | 原图 + `meta.json`（IP、机型、GPS、时间） | 自己硬盘 | 长期归档、看谁传了什么机型 |
+
+KV 免费额度适合「自己用 + 几个朋友」，不适合当图床给陌生人用：80 张压缩图约 20~30 MB，一天造十来面墙会碰到日写上限，而原图归档本该是硬盘的活。NAS 那部分（`server/`，零依赖 Node + Docker）是单独的服务，部署说明见 `server/README.md`。
+
+### 云端同一面墙的接口
+
+`functions/api/wall/[[path]].js`（Cloudflare Pages Function，绑 KV 命名空间 `WALLS`）：
+
+| 路由 | 作用 |
+|---|---|
+| `GET /api/wall/ping` | 探活（不需要 key） |
+| `POST /api/wall/pair` | 用 12 位同步码换回 key |
+| `GET /api/wall/index` | 拉这面墙的清单（含每张的 id / 地点 / 经纬度 / 名次） |
+| `PUT /api/wall/blob?id=…` | 传一张压缩图（≤8 MB，幂等：同 id 覆盖） |
+| `POST /api/wall/index` | 整体覆盖清单（≤80 张、≤256 KB），返回同步码 |
+| `DELETE /api/wall/index` | 删整面墙（清单 + 同步码 + 所有图） |
+
+key 走 `x-wall-key` 头。没有账号系统，所以服务端只做「拿着这把 key 才能读写这把 key 下的东西」，不做权限分级 —— 同步码等于共享密钥，别公开发。
 
 ---
 
