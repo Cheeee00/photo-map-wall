@@ -219,3 +219,27 @@
 - **`<script>` 语法错时页面全哑**：`window.__dbg` 全部 `undefined`，测试只会报 `Cannot read properties of undefined (reading 'layoutState')`，看不出根因。固化了定位手法：从 `index.html` 抽出 `<script>` 内容写临时 `.js`，`node --check` 能直接给行号和报错（那次是 `};` 写成 `},`）。
 - 改名时踩了 `SyntaxError: Identifier 'slotsAll' has already been declared`（优化器里的同名变量改成了 `slotsAllFlat`）。
 - `Start-Process -RedirectStandardOutput` 在本机直接报 `Item has already been added. Key in dictionary: 'NO_PROXY'`，串行跑多尺寸只能用 `node ... | Out-String`。
+## R16 · 拖动排序 / 云端压缩 / 世界城市 / 导出 2×
+
+**本轮做了什么**（全部在 `src/index.template.html`，`node src/build.mjs` → `index.html` 1,213,031 B + 同步 `dist/`）
+
+1. **拖动照片 = 换槽位，记名次不记坐标**
+   - `makePhoto()` 加 `rank: null`；`applyRanks(list)` 把带 `p.rank` 的照片按名次 splice 进按方位角排好的序列。
+   - `ringLayout()` 里把「槽位序列」与「照片指派」拆开：`natural`（纯按方位角）交给 DP 挑槽位得到 `chosenRing`，再用 `order`（插过名次的）去消费 —— 早先把带名次的序列也交给 DP，换一张照片会把整条槽位序列拽偏，虚线框和落点对不上。
+   - `ringLayout` 返回值加 `ring`（本次实际用的槽位）与 `dbg`（名次快照，供测试读）。
+   - 优化器尊重手动位次：`locked[i] = p.rank != null`，`canMove(i)` 为假的照片不参与单点移动与交换；**但如果名次恰好等于自然位（`rankConsistent`），就当没锁** —— 否则 `rank=0` 这种「本来就在原位」的手动位会把优化器整个关掉，白白丢零交叉。
+   - 有锁定时用「整体循环旋转」找交叉最少的摆法（把未锁定的照片在空槽位上整体转 r 个位置，全试一遍取 `totalX()` 最小），实测多数情况下能把交叉消掉，消不掉就如实提示。
+   - 拖动 UI：`#slotHint` 虚线框标出会落到哪一格（`nearestRingSlot()` 按锚点距离找），`onPhotoUp` 里 `p.rank = hit.rank` → `patchPhotoRec` → `syncScheduleIndex` → `renderPhotos()`，提示「已排到第 N 位（绕地图一圈数）」。
+   - 大图预览里的「回原位」按钮改名「自动排位」，`p.rank = null` 后恢复自动摆布。
+   - 持久化：`savePhotoRec` / `patchPhotoRec` / `restoreFromDB` / 云端清单（`syncPushIndex`、`syncPull`）全带上 `rank`。
+2. **导出 2× + 像素上限**：`EXPORT_H = 1200`、`EXPORT_SCALE = 2`、`EXPORT_MAX_PX = 3.2e7`（超了等比收）、`EXPORT_SS_MAX_PX = 1.4e7`（成品已很大就不再 2× 超采样，手机不会 OOM）。提示文案随实际走的路径变（有没有超采样如实说）。
+3. **HEIC 说法要准**：新增 `isHeicFile()`（读 `ftyp` 盒的 brand：heic/heix/hevc/hevx/heim/heis/mif1/msf1）。解不开时分成两句：`badHeic` 说「是 iPhone 的 HEIC，三个办法任选」，`bad - badHeic` 说「文件可能损坏或格式不支持」。以前把所有解不开的都算成 HEIC，会把一张坏 JPEG 骂成格式问题。
+4. **云端只存压缩版**：`shrinkForCloud(p)` —— 长边 1600、JPEG 0.8；`syncPutPhoto` 先试压缩、失败才退回原图。本机、导出、预览仍全部用原图。
+5. **世界城市**：`tools/gen_cities.mjs` → `data/cities.js`（1018 城 / 169 国 / 39,916 B，人口 ≥30 万或首都，同国同名取人口最大，每国最多 30 个）。`locateLabel()` 国外分支先按 90 km 找最近城市，找不到才用国家名。
+6. **取景粒度四档**：中国档 `全部/省/城市`，全球档 `全部/大洲/国家/城市`（`GRAN_CN`、`GRAN_WORLD`、`buildGranOptions()`）；`p.cc` 记国家名，`granBox()` 新增 `cont`/`country` 分支按大洲/国家并集外接框取景。
+
+**踩的坑（每条都真踩过）**
+- `build.mjs` 里 CITIES_W 的占位符必须包含**整行左半**（`const CITIES_W = /*__CITIES__*/[];`），只替换 `/*__CITIES__*/[]` 会拼出 `const CITIES_W = const CITIES_W = […];;` → `SyntaxError: Unexpected token 'const'`。定位手法：从 `index.html` 抽出 `<script>` 正文到 `$env:TEMP\pmw-check.js` 再 `node --check`，能直接拿到行号。
+- 测试断言写错过两次：①「国家档比大洲档细」在照片全球撒开时不成立（俄罗斯/美国跨洲，外接框几乎等于全世界），必须用**同一大洲**的三张照片才测得出层级；②「国家档比全部粗」不成立（法国世界边界含海外省，圭亚那在 -53°）。层级只在 大洲 ⊃ 国家 ⊃ 城市 之间成立。
+- `test/cdp-sync.mjs` 里「服务端存了原图字节」这句已经是假话（现在存的是压缩版），改成「存的是压过的中等尺寸版本」并加 `≤1.5 MB && t==='image/jpeg'` 判据。
+- 诊断脚本必须放 `test/` 目录（放 `%TEMP%` 里 `import './_cdp.mjs'` 会 `ERR_MODULE_NOT_FOUND`）；`launch()` 不导航，清 IndexedDB 前得先 `await t.goto()`。
