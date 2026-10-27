@@ -12,6 +12,7 @@ const OUT = SHOTS_DIR;
 const IMGS = IMGS15;
 const PAGE = PAGE_URL;
 
+fs.rmSync(TMP, { recursive: true, force: true });
 fs.mkdirSync(TMP, { recursive: true });
 const chrome = spawn(CHROME, [
   '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
