@@ -4,6 +4,29 @@
 
 ---
 
+## GitHub 推送
+
+### gh_push.ps1 的 summary 不能当验收
+
+它最后打印 `summary: added=N updated=M skipped=K`，但：
+
+- N+M+K **常常不等于** staged 文件数（出现过 42 vs 57）；
+- 说 `updated=2` 也可能**根本没落地**（第一轮推完 README 在 remote 上还是旧字节数）。
+
+**唯一可信的验收是重拉 tree API 逐文件比大小** —— 已经固化成 `tools/check_github.mjs`。这次就是靠它发现 `functions/api/wall/[[path]].js`（文件名含方括号）压根没上传上去。
+
+发现不一致就原样再推一次（接口是幂等的），第二轮通常才带上。
+
+### 文件名含方括号时 Copy-Item 会当通配符
+
+`functions/api/wall/[[path]].js` 里的 `[[path]]` 在 `-Path` 参数下被当通配符匹配（匹配 `p`/`a`/`t`/`h` 中任一字符），于是文件被静默跳过。**必须用 `-LiteralPath`**。
+
+### 用 fetch 的脚本退出码会被 libuv 断言污染
+
+Node 24 的全局 `fetch` 走 keep-alive 连接池，进程退出时会在 libuv 里断言失败：
+`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`，退出码被改成 1（或 `0xC0000409`）——
+**跟「核对失败」的退出码一模一样**，极易误判。`tools/check_github.mjs` 改走 `curl.exe` 才干净。
+
 ## Windows / Node
 
 ### 删「刚被浏览器写完的图片」会让 node 硬崩
