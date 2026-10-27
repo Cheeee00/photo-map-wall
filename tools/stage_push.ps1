@@ -6,7 +6,9 @@ param(
   [string]$LocalDir = 'D:\DSH\创业项目\photo-map-wall',
   [string]$Message = 'update',
   [switch]$Push,
-  [string]$Branch = 'main'
+  [string]$Branch = 'main',
+  # 本地已删、GitHub 上还留着的文件（比如被新测试取代的旧脚本）
+  [string[]]$Delete = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,5 +47,5 @@ if ($Push) {
   $sp = 'C:\Users\ChenLong\.dsh\scripts\gh_push.ps1'
   if (-not (Test-Path $sp)) { throw "找不到 gh_push.ps1：$sp" }
   $sb = [scriptblock]::Create([IO.File]::ReadAllText($sp))
-  & $sb -Repo $Repo -LocalDir $stage -Message $Message -Branch $Branch -Proxy 'http://127.0.0.1:7897'
+  & $sb -Repo $Repo -LocalDir $stage -Message $Message -Branch $Branch -Proxy 'http://127.0.0.1:7897' -Delete $Delete
 }
