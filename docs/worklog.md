@@ -19,7 +19,7 @@
 
 **踩到的坑**
 
-- **省界简化把澳门整个抹掉了**：Douglas-Peucker 容差（0.055°）比澳门本身还大。修法是先记下每个要素面积最大的环，面积过滤后若为空就用该环并以 `TOL/12` 重简。最终 35 省齐全，70,603 B。
+- **省界简化把澳门整个抹掉了**：Douglas-Peucker 容差（0.055°）比澳门本身还大。修法是先记下每个要素面积最大的环，面积过滤后若为空就用该环并以 `TOL/12` 重简。最终 35 省齐全，70,603 B（后来 `gen_labels.mjs` 补进省名标注点与内切半径，`provinces.js` 变 71,813 B）。
 - **大陆被塞进了南海诸岛的小图**：`v = mercY(lat)`，纬度越高 `v` 越负，所以 bbox 的 `v0` 才是「最北」。原来用 `v1` 判断，把整个中国大陆判成了南海诸岛。改用 `mercLatOf(b.v0)`。
 - **CDP 响应是两层 `result`**：`m.result.result.value`。写成一层时所有 evaluate 都返回 `undefined`，排查了很久。
 
@@ -35,7 +35,7 @@
 | 2 | 零依赖 EXIF GPS 解析（APP1 → TIFF → GPS IFD → 度分秒） | `src/index.template.html` 内 `parseExifGps()` |
 | 3 | 经纬度 → 就近城市（40 城）/ 省级面 PIP 判定 | `nearestCity()` / `provinceOf()` / `locateLabel()` |
 | 4 | 排布从「右侧列打包」改成「绕地图一圈的走廊」 | `ringLayout()` → `corridorSlots()` |
-| 5 | 合成 9 张带已知经纬度的 EXIF 样本做回归 | `test/gen-exif-cases.mjs`、`test/test-parser.mjs`、`test/cdp-exif2.mjs` |
+| 5 | 合成 9 张带已知经纬度的 EXIF 样本做回归 | `test/gen-exif-cases.mjs`、`test/cdp-exif2.mjs`（解析器的隔离单测随旧工作目录留在本机，没入库） |
 
 **关键结论：红线交叉的真正原因有三个，全都是「两处口径不一致」**
 
@@ -58,7 +58,7 @@
 | 3 | 省名锚点 + 内切圆半径（35 省），随缩放自动取舍字号 | `tools/gen_labels.mjs` |
 | 4 | 5 张 HEIC → JPEG（保留 EXIF GPS），base64 内联为默认示例 | `tools/heic2jpg.py`、`src/build.mjs` |
 
-**坑**：示例照片用 700px 转出来是 902 KB，内联后单文件逼近 2 MB。降到 460px / q64 后 143 KB，肉眼几乎无差。
+**坑**：示例照片用 700px 转出来是 902 KB，内联后单文件逼近 2 MB。降到 460px / q64 后 143 KB，肉眼几乎无差。后来入库的 `assets/demo5` 换成更高画质的 5 张，共 281 KB（base64 后 375 KB），单文件仍在 1.2 MB 以内。
 
 ---
 
@@ -193,3 +193,29 @@
 - **测试块截图不能直接进 README**：`test/shots/W3-world-photos.png` 里的照片是合成出来的纯蓝方块（`_exif.mjs` 早期只用 24×24 载体），当配图像坏图。造演示图的正确做法是**真照片 + 注入坐标**，而不是为了配图去伪造拍摄记录 —— 所以先抽出 `buildApp1()`，再加 `injectGps(jpegBuf, lat, lon)` 往真实 JPEG 的 SOI 后插 APP1。
 - **PNG→JPG 仍在 Node 之外**：`test/gen-testimg.mjs` 有纯 Node 的 PNG 编码器，但没有 JPEG 编码器，所以转换这一步还是 pwsh + `System.Drawing`。这也是 TODO 里「截图全自动」没做完的原因之一。
 - **文档体检的第一版一堆误报**：把 `node src/build.mjs` 这种命令行当成路径、把 worklog / acceptance 里「当时那一轮」的产物字节数当成「当前事实」、把 TODO 里还没创建的 `test/security.test.mjs` 当成缺失文件。逐类收窄判据（命令行前缀白名单、只有 README 参与字节数校验、TODO 跳路径检查）之后才是有用的检查 —— **校验器比被测对象更容易写错**。
+
+---
+
+## R15 · 布局算法重写（40 张以内红线不交叉）
+
+**起因**：用户的要求本来就是「照片绕地图一圈、线与线之间不能交叉」。回归压测把这条承诺打穿了：30 张 6 处交叉、40 张 16 处；20/24 张更是直接掉进 `cascadeLayout()`，照片叠成一坨并且互相重叠、出界。
+
+**做法的四次迭代**
+1. **先怀疑优化器**：把局部计数的 delta 换成「每轮全量 `totalX()` 评估候选」，只接受交叉更少（并列时更短）的移动。30/40 张从 6/16 降到 6/16 —— 没用，说明问题在上游。
+2. **再查分边**：打印每条走廊的槽位数与「放弃原因」，看到 `corridor 3 (0 slots) full at item 14 ang=299`。窄画布上，二十多张图钉的方位角都落在 40°–200°，右走廊只有 12–20 个槽位，于是有照片被推进**零槽位**的走廊并直接 `fits:false`。改成「连续弧切分」也不行 —— 本质是「按边分组」这个思路在打卡点扎堆时无解。
+3. **改为全局保序指派**：把四条走廊的槽位合成一个按方位角排序的序列，照片也按方位角排序，用 O(n·k) DP 挑出等量且**次序完全一致**的槽位（代价 = 方位角差）。几何上的依据写进了代码注释：锚点在外圈、图钉在内圈，两圈点按同一循环次序配对，线段互不相交。30/40 张立刻变成 0。
+4. **收尾的三个脏 bug**：① `cascadeLayout()` 还按扁平数组用 `corridorSlots()` 的返回值（早已改成四组）→ 坐标 `NaN`，这是 20/24 张「叠在原点」的真因 ② 档位回退到 cascade 时用了**最大档 200**，摊成一片重叠 ③ 槽位缺 `ang` 字段，DP 代价 `NaN`，回溯带空洞。
+
+**性能**：40 张一度要 **35.7 秒**。三刀砍下来：① `yarnPath()` 从「17 点采样」改成直接返回两点（线本来就是直线，采样让相交判定慢 256 倍）② 档位搜索从「顺序试 19 档」改成**二分找第一个 fits 的档** ③ 候选档先跑 `probe=true`（跳过优化器、只算一次交叉数）排序，再按序真优化，第一个 0 交叉即收工。现在 1.0–1.3 秒。
+
+**还加了一条**：优化器跑完若还有交叉，做**确定性扰动重启**（最多 80 次，扰动 = 交换第 `(k*37)%m` 与 `(k*91+11)%m` 张的槽位，再跑 60 轮优化），用 `snap()/load()` 保存/回滚最好状态。用固定步长伪随机而不是 `Math.random`，保证同一批照片每次排出同一结果。
+
+**手机端连带**：地图卡片比例从固定 0.84 改成 `BW < 900 ? 0.74 : 0.84`。0.74 是实测下限 —— 再宽一点侧走廊就窄到连一列 60px 的照片都放不下，40 张会全挤在上下两条走廊叠成一坨。桌面不受影响。
+
+**验收**：7 种窗口尺寸（2200×1100 / 1600×1000 / 1366×768 / 900×1600 / 820×1180 / 430×932 / 393×852）× 5/15/24/40 张 = 28 组，全部 `crossings: 0`、`issues: []`。
+
+**踩到的坑**
+- **诊断脚本自己会把结果测错**：`dbg-perf` / `dbg-lay` 里调 `__dbg.layout()` 会重新执行 `ringLayout` → 内部 `computePinCard()` 重算 `p._pinCard`，导致自检用的针位与渲染时的 `p._pinBoard` 脱钩，测出「30 张 3 处、40 张 6 处」的假交叉。只有不调 layout 的 `dbg-x.mjs` 才是真值。
+- **`<script>` 语法错时页面全哑**：`window.__dbg` 全部 `undefined`，测试只会报 `Cannot read properties of undefined (reading 'layoutState')`，看不出根因。固化了定位手法：从 `index.html` 抽出 `<script>` 内容写临时 `.js`，`node --check` 能直接给行号和报错（那次是 `};` 写成 `},`）。
+- 改名时踩了 `SyntaxError: Identifier 'slotsAll' has already been declared`（优化器里的同名变量改成了 `slotsAllFlat`）。
+- `Start-Process -RedirectStandardOutput` 在本机直接报 `Item has already been added. Key in dictionary: 'NO_PROXY'`，串行跑多尺寸只能用 `node ... | Out-String`。
