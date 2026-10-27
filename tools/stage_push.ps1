@@ -33,7 +33,8 @@ Get-ChildItem -Path $LocalDir -Recurse -File | ForEach-Object {
   $dst = Join-Path $stage $rel
   $dir = Split-Path $dst -Parent
   if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-  Copy-Item $_.FullName $dst -Force
+  # functions/api/wall/[[path]].js 里有方括号，Copy-Item 默认当通配符 → 必须用 -LiteralPath
+  Copy-Item -LiteralPath $_.FullName -Destination $dst -Force
   $n++
   $bytes += $_.Length
 }
