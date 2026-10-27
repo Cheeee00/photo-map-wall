@@ -75,26 +75,34 @@ async function counts(tag) {
 
   await t.screenshot('P1-restored.png');
 
-  // 点「示例」→ 清空本地
+  // 点「看示例」→ 只是借看一下，**不能**清掉本地照片（旧的「示例」按钮会一键清空，
+  // 那是整个界面上唯一能一键毁掉用户照片的地方，已改成可来回切换）
   await t.evaluate('document.getElementById("btnDemo").click()');
   await sleep(1400);
   st = JSON.parse(await t.evaluate('JSON.stringify(window.__selfTest())'));
-  t.ok('点示例后：回到 5 张示例', st.photos === 5, 'photos=' + st.photos);
+  t.ok('点看示例后：屏幕上换成 5 张示例', st.photos === 5, 'photos=' + st.photos);
   await sleep(600);
   const db2 = await t.evaluate('window.__dbg.dbCount()');
-  t.ok('点示例后：本地记录被清空', db2 === 0, 'dbCount=' + db2);
+  t.ok('点看示例后：本地记录原样保留（3 条）', db2 === 3, 'dbCount=' + db2);
+  await t.evaluate('document.getElementById("btnDemo").click()');
+  await sleep(1400);
+  st = JSON.parse(await t.evaluate('JSON.stringify(window.__selfTest())'));
+  t.ok('再点一次：回到自己的 3 张', st.photos === 3, 'photos=' + st.photos);
 
-  // 再刷新：应仍是示例，不该把刚才的记录捞回来
+  // 刷新后仍是自己的 3 张，不该被示例顶掉
   await t.goto(URL_);
   await sleep(2600);
   st = JSON.parse(await t.evaluate('JSON.stringify(window.__selfTest())'));
-  t.ok('再刷新：仍是示例 5 张（没有被旧记录复活）', st.photos === 5, 'photos=' + st.photos);
-  t.ok('再刷新：粒度档重新禁用', (await t.evaluate('document.getElementById("selGran").disabled')) === true);
+  t.ok('刷新后：仍是自己的 3 张', st.photos === 3, 'photos=' + st.photos);
+  t.ok('刷新后：粒度档仍可用', (await t.evaluate('document.getElementById("selGran").disabled')) === false);
 
-  // 异常兜底：删掉一张后本地记录同步减少
+  // 异常兜底：再传一次 3 张 → 累加到 6 张，删掉一张后本地记录同步减少
   await t.setFiles('#file', pics);
   await sleep(2600);
-  t.ok('再次上传：3 张', (await t.evaluate('window.__selfTest().photos')) === 3);
+  const n6 = await t.evaluate('window.__selfTest().photos');
+  const db6 = await t.evaluate('window.__dbg.dbCount()');
+  t.ok('再次上传 3 张：累加到 6 张（不覆盖已有的）', n6 === 6, 'photos=' + n6);
+  t.ok('再次上传后：本地记录也是 6 条', db6 === 6, 'dbCount=' + db6);
   await t.evaluate(`(function(){
     const p = window.__dbg.photos()[0];
     document.querySelector('#gPhotos > g[data-uid="' + p.uid + '"]').dispatchEvent(new MouseEvent('click', {bubbles:true}));
@@ -103,7 +111,7 @@ async function counts(tag) {
   await t.evaluate('document.getElementById("popDel").click()');
   await sleep(1200);
   const db3 = await t.evaluate('window.__dbg.dbCount()');
-  t.ok('删一张后：本地记录同步减到 2', db3 === 2, 'dbCount=' + db3);
+  t.ok('删一张后：本地记录同步减到 5', db3 === 5, 'dbCount=' + db3);
 })().catch((e) => { fatal = e; console.error('FATAL', e.message); })
   .finally(() => {
     const pass = t ? t.report() : false;
