@@ -240,3 +240,11 @@
 | 文档体检 | `node tools/check_docs.mjs` | ✅ |
 
 > **注（层级只在同洲可比）**：「国家档比大洲档细」只在三张照片同属一个洲时成立；照片全球撒开时不成立（俄罗斯/美国跨洲，外接框几乎等于全世界）。「国家档比全部粗」也不成立 —— 法国的世界边界含海外省（圭亚那在 -53°）。这两条写进 `cdp-gran.mjs` 注释，防止以后有人按直觉改回错误断言。
+
+| 导出 2× 且不 OOM | 横屏 4157×2400、竖屏 1796×2400（原 2078×1200 / 898×1200） | ✅ |
+| HEIC 与「文件损坏」分开提示 | `isHeicFile()` 判 `ftyp` brand | ✅（逻辑断言；真机 HEIC 仍待验） |
+| 云端只存压缩版 | 服务端 `bytes` 34–204 KB、`t: image/jpeg` | ✅ |
+| NAS 服务可复跑安全测试 | `cd server && node --test test/security.test.mjs` → 10/10（修了 Windows 路径 percent-encoding） | ✅ |
+| 配图自动化 | `node tools/make_docs_shots.mjs` 自动出 7 张（真照片 + 注入坐标） | ✅ |
+| 文档体检 | `node tools/check_docs.mjs` 通过 | ✅ |
+| 线上 + 仓库三方一致 | `check_github.mjs` 82/82 一致；`api-cloud` 20/20；`cdp-live` 17/17 | ✅ |
