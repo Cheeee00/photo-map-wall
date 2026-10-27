@@ -57,7 +57,7 @@
 
 | 判据 | 实测 | 结论 |
 |---|---|---|
-| 默认不空墙 | 5 张真实照片，真实 GPS，总 143 KB（base64 后 190 KB） | ✅ |
+| 默认不空墙 | 5 张真实照片，真实 GPS，总 281 KB（base64 后 375 KB） | ✅ |
 | 示例照片也走同一套定位逻辑 | `useDemo()` → `locateLabel(lon, lat)` → 新疆 ×2 / 吉林 / 内蒙古 / 广西 | ✅ |
 
 ---
@@ -79,7 +79,7 @@
 
 | 判据 | 实测 | 结论 |
 |---|---|---|
-| 仓库干净可构建 | `node src/build.mjs` 一条命令产出 `index.html`（986,792 B） | ✅ |
+| 仓库干净可构建 | `node src/build.mjs` 一条命令产出 `index.html`（当时 986,792 B；R15 布局重写后 1,150,256 B） | ✅ |
 | 在线可访问 | <https://wall.orange0323.dpdns.org> | ✅ |
 | 清理过程文件 | **待用户逐项确认**（涉及另一个无关项目的约 120 MB 数据，路径不便公开） | ⏸ 见 TODO |
 
@@ -121,8 +121,8 @@
 |---|---|---|
 | 无口令 / 错口令一律 401 | 局域网直连服务端口 → 401 | ✅ |
 | 端到端上传 | batch → 2 张 PUT → 幂等重传 → 非法索引 → finish → recent 全通 | ✅ |
-| 记录了来源与机型 | `meta.json` 里有 ip / userAgent（解析出 iOS 17.0）/ `Make=Apple` / `Model=iPhone 15 Pro` / GPS | ✅ |
-| 安全测试 | `node --test test/security.test.mjs` **10/10**（路径穿越、越界索引、非图字节、超限 413、magic bytes 优先于扩展名…） | ✅ |
+| 记录了来源与机型 | `meta.json` 里有 ip / userAgent（解析出 iOS 17.0）/ `Make=Apple` / `Model=iPhone 15 Pro` / GPS | ⚠ 一次性人工核对，样本 `meta.json` 未入库 |
+| 安全测试 | `node --test test/security.test.mjs` **10/10**（路径穿越、越界索引、非图字节、超限 413、magic bytes 优先于扩展名…） | ⚠ **当时跑过，但脚本没入库 → 现在无法复跑**（见 TODO） |
 | 前端接入 | 未接 | ❌ 见 TODO |
 
 ---
@@ -188,7 +188,7 @@
 | 线上 = 本地 | Pages 部署产物与本地 `index.html` 字节一致 | `1,109,488 B = 1,109,488 B`（自定义域 +367 B 是 Cloudflare beacon） | ✅ |
 | 线上冒烟 | `test/cdp-live.mjs` 三档视口 | 17/17 PASS | ✅ |
 | 仓库 = 本地 | GitHub tree API 逐文件比 | 54 blob，无单边文件、无大小差异 | ✅ |
-| README 事实 | 占位符数量、降档档位、仓库结构与代码一致 | 已改成五个占位符 / 42 档 + cascade / 补世界国界 | ✅ |
+| README 事实 | 占位符数量、降档档位、仓库结构与代码一致 | 已改成五个占位符 / 19 档 + cascade / 补世界国界 | ✅ |
 | 全球档配图 | `test/cdp-docs.mjs` 生成、真照片 + 注入坐标 | `photos=5 crossings=0 issues=0`，地点 法国/美国/日本/澳大利亚/北京，`scope=world` | ✅ |
 
 ---
@@ -201,3 +201,22 @@
 | HEIC 直接上传 | **预期失败** | Chrome / 微信内置浏览器解不了 HEIC。页面已给出三条出路，但没做成服务端转码。 |
 | 刷新后照片丢失 | **已解决** | 见 R13。副作用：跨设备不同步、iOS Safari 7 天不用会被清（已记 TODO）。 |
 | 过程文件清理 | **等确认** | 涉及不属于本项目的 120 MB 数据，必须逐项确认后删。 |
+
+---
+
+## R15 · 布局算法重写（40 张以内红线不交叉）
+
+判据：`node test/dbg-x.mjs <张数> <宽> <高>` → 页面 `__selfTest()` 的 `crossings` 与 `issues`。
+
+| 判据 | 实测 | 结论 |
+|---|---|---|
+| 5 张（示例）7 尺寸 | 全部 `crossings: 0` / `issues: []` | ✅ |
+| 15 张 7 尺寸 | 全部 `crossings: 0` / `issues: []` | ✅ |
+| 24 张 7 尺寸 | 全部 `crossings: 0` / `issues: []`（重构前：掉进 cascade，重叠 + 出界） | ✅ |
+| 40 张 7 尺寸 | 全部 `crossings: 0` / `issues: []`（重构前：16 处交叉） | ✅ |
+| 30 张 | `crossings: 0`（重构前：6 处） | ✅ |
+| 渲染耗时 | 40 张 1.0–1.3 s（中间态曾 35.7 s） | ✅ |
+| 结果确定性 | 固定步长伪随机扰动，同一批照片每次同一排布 | ✅ |
+| 桌面无回归 | `cdp-shot` / `cdp-ux` 28/28 / `cdp-ux2` 21/21 / `cdp15` / `cdp-cross`（40 张独立复算 0）/ `cdp-reflow` 六档 / `cdp-persist` 21/21 / `cdp-stability` 37/37 / `cdp-sync` 28/28 / `cdp-world` 22/22 / `cdp-exif2` / `cdp-drag` | ✅ |
+| 手机适配未回归 | `cdp-mobile` 全 PASS，地图占画布 74%、21 张 0 交叉 0 出界 | ✅ |
+| 文档体检 | `node tools/check_docs.mjs` 通过（并修掉了它「正则没匹配到也打 ✓」的空转） | ✅ |
