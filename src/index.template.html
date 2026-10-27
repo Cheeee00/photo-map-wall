@@ -516,7 +516,6 @@ function buildBoard() {
 /* ------------------------------------------------------------- 地图卡片 --- */
 let baseView = null;          // 中国全览基准变换
 let coreUV = null;            // 用于基准适配的 uv 范围
-let scsUV = null;             // 南海诸岛 inset 用的多边形
 let provUV = [];              // 每省投影后的多边形 + 包围盒
 let worldUV = [];             // 全球档：所有国家投影后的多边形
 
@@ -571,10 +570,9 @@ function buildCard() {
   const chinaUV = toUVPolys(CHINA_POLYGONS);
   const chinaBounds = uvBounds(chinaUV);
 
-  // 主体（用「最北纬度」区分：主图给大陆/海南/台湾/港澳，最南的小岛进 inset 小窗）
+  // 主体（用「最北纬度」区分：主图只画大陆/海南/台湾/港澳，最南的小礁不参与基准适配）
   // 注意 v0 是最小 v = 最北，v1 是最大 v = 最南，别搞反
   coreUV = chinaUV.filter(function (poly) { return mercLatOf(uvBounds([poly]).v0) > 17; });
-  scsUV = chinaUV.filter(function (poly) { return mercLatOf(uvBounds([poly]).v0) <= 21; });
 
   // 省界（只在「中国」档需要）
   if (scope === 'cn') {
@@ -1014,8 +1012,6 @@ function sideOf(ang) {
   if (ang < 225) return 2;
   return 3;
 }
-
-function angDist(a, b) { const t = Math.abs(a - b) % 360; return t > 180 ? 360 - t : t; }
 
 /* 红线的实际形状：两点之间拉直（毛线绷紧就是直线）。排布与自检都用它。
    只给两个端点 —— 线就是直线，采样 17 点既无意义又让相交判定慢 256 倍。 */
