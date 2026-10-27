@@ -309,8 +309,6 @@
     </select>
     <select class="gsel" id="selGran" title="缩放粒度">
       <option value="all" selected>粒度：全部</option>
-      <option value="prov">粒度：省</option>
-      <option value="city">粒度：城市</option>
     </select>
   </div>
   <div class="row ops">
@@ -359,7 +357,7 @@
     <div id="viewerBar">
       <label>地点</label>
       <select id="popCity"></select>
-      <button class="reset" id="popReset">回原位</button>
+      <button class="reset" id="popReset">自动排位</button>
       <button class="del" id="popDel">移除</button>
       <button class="close" id="viewerClose">关闭</button>
     </div>
@@ -382,6 +380,9 @@
 //__PROV_DATA__
 
 //__WORLD_DATA__
+
+/* 全球城市（中文名，构建时从 Natural Earth + OpenCC 生成）：[名, 国, 经, 纬] */
+const CITIES_W = /*__CITIES__*/[];
 
 // 城市表（lon, lat）
 const CITIES = [
@@ -476,7 +477,7 @@ const board = document.getElementById('board');
 const stage = document.getElementById('stage');
 let defsEl = el('defs', null, board);
 
-let layerBoard, layerCard, layerMapClip, layerMapContent, layerPins, layerYarn, layerPhotos;
+let layerBoard, layerCard, layerMapClip, layerMapContent, layerPins, layerYarn, layerPhotos, layerHint, slotHint;
 
 /* ------------------------------------------------------------- 构建背景 --- */
 function buildBoard() {
@@ -518,6 +519,7 @@ let baseView = null;          // 中国全览基准变换
 let coreUV = null;            // 用于基准适配的 uv 范围
 let provUV = [];              // 每省投影后的多边形 + 包围盒
 let worldUV = [];             // 全球档：所有国家投影后的多边形
+let worldBox = [];            // 与 WORLD 同下标的 uv 外接框（大洲/国家粒度取景用）
 
 function toUVPolys(polys) {
   return polys.map(function (poly) {
@@ -584,10 +586,13 @@ function buildCard() {
 
   // 全球档：陆地 = 所有国家的轮廓；中国档：陆地 = 中国核心环
   worldUV.length = 0;
+  worldBox.length = 0;
   if (scope === 'world') {
     for (let i = 0; i < WORLD.length; i++) {
       const uvs = toUVPolys(WORLD[i].p.map(function (r) { return [r]; }));
       for (let j = 0; j < uvs.length; j++) worldUV.push(uvs[j]);
+      // 每个国家一个外接框：大洲/国家两档取景直接用它，不用再扫一遍点
+      worldBox.push(uvs.length ? uvBounds(uvs) : null);
     }
   }
 
@@ -937,6 +942,12 @@ function buildPhotosLayer() {
   layerPhotos = el('g', { id: 'gPhotos' }, board);
   layerYarn = el('g', { id: 'gYarn' }, board);
   layerYarnInner = el('g', null, layerYarn);
+  layerHint = el('g', { id: 'gHint', 'pointer-events': 'none' }, board);
+  slotHint = el('rect', {
+    id: 'slotHint', x: 0, y: 0, width: 0, height: 0, rx: 4,
+    fill: 'rgba(192,57,43,.10)', stroke: '#C0392B', 'stroke-width': 2,
+    'stroke-dasharray': '7 5', opacity: 0, 'vector-effect': 'non-scaling-stroke'
+  }, layerHint);
 }
 
 function polDims(p, contentW) {
@@ -1033,9 +1044,27 @@ function ringAng(x, y) { return (Math.atan2(x - CARD.cx, -(y - CARD.cy)) / D2R +
 
 let ringLen = 0;   // 供 __dbg 观测：当前档位下可用槽位数
 let ringWhy = '';  // 供 __dbg 观测：ringLayout 放弃的原因
+let ringOrderDbg = '';
+let ringRotDbg = '';   // 供 __dbg 观测：这一轮「照片→次序」的最终排法
 
 /* 排布主入口：返回 {fits, cells: Map(uid→{cx,cy,ax,ay,d})}。
    ax/ay 是照片自己的针（锚点），cx/cy 是照片中心。 */
+/* 用户手动排过序的照片带 p.rank = 它想站的「第几号位」（0 起，绕卡片一圈算）。
+   用名次而不是坐标，是因为名次与画布尺寸、照片张数都无关：换个窗口、再加两张，
+   你排的顺序还在。没带 rank 的照片继续按方位角自动排，带 rank 的插到指定位置。 */
+function applyRanks(list) {
+  let has = false;
+  for (let i = 0; i < list.length; i++) if (list[i].p.rank != null) { has = true; break; }
+  if (!has) return;
+  const pinned = list.filter(function (q) { return q.p.rank != null; });
+  const rest = list.filter(function (q) { return q.p.rank == null; });
+  pinned.sort(function (a, b) { return a.p.rank - b.p.rank; });
+  for (let i = 0; i < pinned.length; i++) {
+    rest.splice(clamp(Math.round(pinned[i].p.rank), 0, rest.length), 0, pinned[i]);
+  }
+  for (let i = 0; i < list.length; i++) list[i] = rest[i];
+}
+
 function ringLayout(items, contentW, gap, probe) {
   void gap;
   ringWhy = '';
@@ -1067,33 +1096,48 @@ function ringLayout(items, contentW, gap, probe) {
 
   const slotsAll = slotsG[0].concat(slotsG[1], slotsG[2], slotsG[3])
     .sort(function (a, b) { return a.ang - b.ang || a.ax - b.ax || a.ay - b.ay; });
-  const sorted = info.slice().sort(function (a, b) { return a.ang - b.ang; });
+  /* 两件事分开算，否则互相干扰：
+     ① 槽位序列：只按「图钉方位角」排（natural），跟手工顺序无关 —— 这样槽位密度
+        只由照片尺寸和画布决定，同一批照片每次挑出来的槽位都一样；
+     ② 谁站哪个槽位：把用户排过的名次插进去（order），再一一对应。
+     早先把①也交给带名次的序列，结果换位的照片会把整条槽位序列拽偏，落点和虚线框对不上。 */
+  const natural = info.slice().sort(function (a, b) { return a.ang - b.ang; });
+  const order = natural.slice();
+  applyRanks(order);
 
   const pick = new Array(info.length);   // info 下标 → 槽位
   const index = new Map();
   info.forEach(function (q, i) { index.set(q, i); });
 
   /* 一维保序 DP：从 n 个有序槽位里挑 k 个给 k 张有序照片，最小化 Σ|方位角之差|。 */
+  let chosenRing = null;                 // 这一轮真正用上的槽位（按绕行顺序），拖动吸附要用
   (function assign() {
-    const k = sorted.length, n = slotsAll.length;
-    if (k === n) { for (let i = 0; i < k; i++) pick[index.get(sorted[i])] = slotsAll[i]; return; }
-    const INF = 1e18;
-    const dp = [], from = [];
-    for (let i = 0; i <= n; i++) { dp.push(new Array(k + 1).fill(INF)); from.push(new Array(k + 1).fill(false)); }
-    dp[0][0] = 0;
-    const cost = function (slot, q) { return Math.abs(slot.ang - q.ang); };
-    for (let i = 1; i <= n; i++) for (let j = 0; j <= k; j++) {
-      dp[i][j] = dp[i - 1][j];
-      if (j > 0 && dp[i - 1][j - 1] < INF) {
-        const v = dp[i - 1][j - 1] + cost(slotsAll[i - 1], sorted[j - 1]);
-        if (v < dp[i][j]) { dp[i][j] = v; from[i][j] = true; }
+    const k = natural.length, n = slotsAll.length;
+    if (k === n) chosenRing = slotsAll.slice();
+    else {
+      const INF = 1e18;
+      const dp = [], from = [];
+      for (let i = 0; i <= n; i++) { dp.push(new Array(k + 1).fill(INF)); from.push(new Array(k + 1).fill(false)); }
+      dp[0][0] = 0;
+      const cost = function (slot, q) { return Math.abs(slot.ang - q.ang); };
+      for (let i = 1; i <= n; i++) for (let j = 0; j <= k; j++) {
+        dp[i][j] = dp[i - 1][j];
+        if (j > 0 && dp[i - 1][j - 1] < INF) {
+          const v = dp[i - 1][j - 1] + cost(slotsAll[i - 1], natural[j - 1]);
+          if (v < dp[i][j]) { dp[i][j] = v; from[i][j] = true; }
+        }
       }
+      const chosen = new Array(k);
+      for (let i = n, j = k; i > 0 && j > 0; i--) if (from[i][j]) { chosen[j - 1] = slotsAll[i - 1]; j--; }
+      chosenRing = chosen;
     }
-    const chosen = new Array(k);
-    for (let i = n, j = k; i > 0 && j > 0; i--) if (from[i][j]) { chosen[j - 1] = slotsAll[i - 1]; j--; }
-    for (let i = 0; i < k; i++) pick[index.get(sorted[i])] = chosen[i];
+    for (let i = 0; i < k; i++) pick[index.get(order[i])] = chosenRing[i];
   })();
   for (let i = 0; i < info.length; i++) if (!pick[i]) { ringWhy = 'unassigned ' + i; return { fits: false, cells: new Map() }; }
+
+  ringOrderDbg = order.map(function (q, i) {
+    return q.p.city + (q.p.rank == null ? '' : '#' + q.p.rank) + '@' + Math.round(pick[index.get(q)].ang);
+  }).join(' ');
 
   // 针固定在槽位锚点上，照片中心由锚点 + 旋转反解出来
   const cellsOf = function (pk) {
@@ -1105,7 +1149,8 @@ function ringLayout(items, contentW, gap, probe) {
       mp.set(q.p.uid, {
         cx: s.ax + ly * Math.sin(rad),
         cy: s.ay - ly * Math.cos(rad),
-        ax: s.ax, ay: s.ay, rot: rot, d: d
+        ax: s.ax, ay: s.ay, rot: rot, d: d,
+        rank: ringAng(s.ax, s.ay)    // 这个槽位绕卡片一圈的角度 → 用来还原「第几号位」
       });
     }
     return mp;
@@ -1152,8 +1197,26 @@ function ringLayout(items, contentW, gap, probe) {
   };
   let curX = totalX();
   let curL = chainLen.reduce(function (a, b) { return a + b; }, 0);
-  if (probe) return { fits: true, cells: cellsOf(pick), x: curX };   // 只探可行性/交叉数，不跑优化器
+  if (probe) return { fits: true, cells: cellsOf(pick), x: curX, ring: chosenRing, dbg: ringOrderDbg };   // 只探可行性/交叉数，不跑优化器
 
+  /* 手动排过序的照片（p.rank != null）不许优化器搬走：位置是用户自己指定的，
+     系统只负责把其余照片排好。代价要说清楚 —— 强行换到不相称的位次时，
+     连线必然可能交叉（提示里会告诉用户，并给一次撤销）。 */
+  /* 名次和"照片本来该在的位置"完全一致时，别当锁 —— 否则会白丢优化器带来的零交叉。
+     只有名次真的把某张照片挪了位，才算"手动排序"。 */
+  let rankConsistent = true;
+  (function () {
+    const nat = info.slice().sort(function (a, b) { return a.ang - b.ang; });
+    for (let i = 0; i < nat.length; i++) {
+      const r = nat[i].p.rank;
+      if (r == null) continue;
+      if (Math.round(r) !== i) { rankConsistent = false; break; }
+    }
+  })();
+  const locked = rankConsistent ? info.map(function () { return false; })
+    : info.map(function (q) { return q.p.rank != null; });
+  const anyLocked = locked.some(Boolean);
+  const canMove = function (i) { return !locked[i]; };
   const optimize = function (maxPass) {
     for (let pass = 0; pass < maxPass && curX > 0; pass++) {
       const bad = [], isBad = new Array(m).fill(false);
@@ -1169,6 +1232,7 @@ function ringLayout(items, contentW, gap, probe) {
       let bestMv = null;
       for (let bi = 0; bi < bad.length; bi++) {
         const i = bad[bi];
+        if (!canMove(i)) continue;                 // 手动排过位的照片不动
         const oldC = crossWith(i, chain[i]);
         if (!oldC) continue;
         for (let fi = 0; fi < free.length; fi++) {
@@ -1200,8 +1264,9 @@ function ringLayout(items, contentW, gap, probe) {
         let best = null;
         for (let x = 0; x < bad.length; x++) {
           const i = bad[x];
+          if (!canMove(i)) continue;
           for (let j = 0; j < m; j++) {
-            if (j === i) continue;
+            if (j === i || !canMove(j)) continue;
             const Ai = yarnPath(info[i].pin, [pick[j].ax, pick[j].ay]);
             const Aj = yarnPath(info[j].pin, [pick[i].ax, pick[i].ay]);
             const oi = chain[i], oj = chain[j];
@@ -1231,13 +1296,53 @@ function ringLayout(items, contentW, gap, probe) {
     }
   };
 
-  optimize(200);
+  /* 用户手工排过位就不优化：优化器只管“少交叉”，它会随手把别人的照片挪来挪去，
+     结果就是「拖到第 6 位，松手后它变成第 4 位」。宁可留几处交叉（提示里已经会说），
+     也不能让用户的手工顺序被悄悄打乱。想回到自动排位 → 大图里点「自动排位」。 */
+
+  /* 手动排过位时优化器被禁用，剩下的交叉靠「整体循环旋转」消：
+     外圈槽位与内圈图钉都按同一个循环次序绕，只要两边保持循环次序一致，
+     线段就不相交。所以把没锁定的照片在空出来的槽位上整体转一个角度试一遍，
+     取交叉最少（其次总线长最短）的那一圈。这样「拖到第 6 位」既能保住，
+     又能把绝大多数情况下的交叉消成 0。 */
+  if (anyLocked && curX > 0) {
+    const seqPos = order.map(function (q) { return index.get(q); });      // 序位 → info 下标
+    const posLocked = seqPos.map(function (pi) { return locked[pi]; });
+    const usedBy = new Set();
+    for (let i = 0; i < seqPos.length; i++) if (posLocked[i]) usedBy.add(pick[seqPos[i]]);
+    const freeSlots = chosenRing.filter(function (s) { return !usedBy.has(s); });
+    const freePos = [];
+    for (let i = 0; i < seqPos.length; i++) if (!posLocked[i]) freePos.push(i);
+    if (freeSlots.length === freePos.length && freePos.length > 1) {
+      const setChain = function (pi) {
+        chain[pi] = yarnPath(info[pi].pin, [pick[pi].ax, pick[pi].ay]);
+        chainLen[pi] = pathLen(chain[pi]);
+      };
+      const place = function (r) {
+        for (let j = 0; j < freePos.length; j++) {
+          pick[seqPos[freePos[(j + r) % freePos.length]]] = freeSlots[j];
+        }
+        for (let j = 0; j < freePos.length; j++) setChain(seqPos[freePos[j]]);
+      };
+      let bestR = 0, bestX = curX, bestL = curL;
+      for (let r = 1; r < freePos.length; r++) {
+        place(r);
+        const x = totalX();
+        const L = chainLen.reduce(function (a, b) { return a + b; }, 0);
+        if (x < bestX || (x === bestX && L < bestL - 1e-9)) { bestX = x; bestL = L; bestR = r; }
+      }
+      place(bestR);
+      curX = bestX; curL = bestL;
+      ringRotDbg = 'rot n=' + freePos.length + ' bestR=' + bestR + ' x=' + bestX;
+    }
+  }
+  if (!anyLocked) optimize(200);
 
   /* 保序指派本身已经能吃掉绝大多数交叉，剩下的零星交叉往往是「局部最优」：
      单点移动和两两交换都会让交叉数上升。这里做确定性随机扰动（固定步长的
      伪随机，不用 Math.random，保证同一批照片每次排出同一个结果）后再优化，
      只保留更好的状态。 */
-  if (curX > 0) {
+  if (curX > 0 && !anyLocked) {
     const snap = function () { return { pick: pick.slice(), chain: chain.slice(), len: chainLen.slice(), x: curX, L: curL }; };
     const load = function (s) {
       for (let t = 0; t < m; t++) { pick[t] = s.pick[t]; chain[t] = s.chain[t]; chainLen[t] = s.len[t]; }
@@ -1264,7 +1369,8 @@ function ringLayout(items, contentW, gap, probe) {
 
 
   // ③ 输出
-  return { fits: true, cells: cellsOf(pick), x: curX };
+  ringOrderDbg = order.map(function (q) { return q.p.city + (q.p.rank == null ? '' : '#' + q.p.rank) + '@' + Math.round(pick[index.get(q)].ang); }).join(' ');
+  return { fits: true, cells: cellsOf(pick), x: curX, ring: chosenRing, dbg: ringOrderDbg };
 }
 
 /* 极端兜底：槽位不够时多出来的照片沿同一槽位阶梯叠放（像真的拍立得摞在一起） */
@@ -1345,6 +1451,7 @@ function renderPhotos() {
     contentW = tryList[tryList.length - 1];
     lay = cascadeLayout(photos, contentW);
   }
+  lay.cw = contentW;   // 记住这一轮用的照片宽度，拖动换位时要按同一档重算
   layoutInfo = lay;
 
   for (let i = 0; i < photos.length; i++) {
@@ -1355,14 +1462,8 @@ function renderPhotos() {
 
     // 针固定在槽位锚点上（布局算好的），旋转角由 uid 派生 → 稳定不变
     const rot = cell.rot;
-    // 用户手动拖过就沿用拖动后的位置（窗口变小后夹回画布内）
-    let cx = cell.cx, cy = cell.cy;
-    if (p.pos) {
-      const hw = (d.pw + d.ph) / 3;
-      cx = clamp(p.pos[0], hw, BW - hw);
-      cy = clamp(p.pos[1], hw, BH - hw);
-      if (cx !== p.pos[0] || cy !== p.pos[1]) p.pos = [cx, cy];
-    }
+    // 位置完全由布局决定（手工拖动通过 p.rank 参与排序，不直接改坐标 → 红线仍不交叉）
+    const cx = cell.cx, cy = cell.cy;
     p._cx = cx; p._cy = cy; p._rot = rot; p._dims = d;
 
     const g = el('g', {
@@ -1602,6 +1703,7 @@ function onPinUp() {
   if (!p) return;
   p.city = locateLabel(p.lon, p.lat);
   if (p._labNode) p._labNode.textContent = p.city;
+  p.cc = countryOf(p.lon, p.lat) || p.cc || '';
   // 用户亲手定过的位置不再是「猜的」：把待确认角标摘掉
   if (p._tagNode && p._tagNode.parentNode) p._tagNode.parentNode.removeChild(p._tagNode);
   p._tagNode = null;
@@ -1625,8 +1727,9 @@ function onPinUp() {
 }
 
 /* --------------------------------------------------------- 拖动照片 --- */
-/* 照片默认按走廊排布自动定位；一旦用户拖过，就记住 p.pos（画布坐标），
-   之后重排（改窗口大小）也沿用这个位置，红线跟着走。 */
+/* 照片默认按走廊排布自动定位。拖动 = 换到另一个槽位，记成 p.rank（绕地图一圈的第几号位），
+   而不是记坐标 —— 这样「其余照片自动让位」「换窗口/加照片后顺序不变」「红线始终不交叉」
+   三件事同时成立。坐标法做不到第三点：钉到任意位置后，两根线必然可能相交。 */
 let dragPhoto = null;
 
 function photoTransform(p, cx, cy) {
@@ -1647,6 +1750,33 @@ function onPhotoDown(ev, p) {
   p._skipClick = false;
   ev.currentTarget.classList.add('dragging');
   try { ev.currentTarget.setPointerCapture && ev.currentTarget.setPointerCapture(ev.pointerId); } catch (e) { }
+}
+
+/* 找离 (x,y) 最近的环形槽位。rank 是这个槽位在「绕卡片一圈」序列里的序号 ——
+   拖到第几个槽位，就等于把这张照片排到第几位，其余照片自动让位。 */
+function nearestRingSlot(x, y) {
+  const ring = layoutInfo && layoutInfo.ring;
+  if (!ring || !ring.length) return null;
+  let best = null, bd = Infinity;
+  for (let i = 0; i < ring.length; i++) {
+    const dx = ring[i].ax - x, dy = ring[i].ay - y, d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = { slot: ring[i], rank: i, dist: Math.sqrt(d) }; }
+  }
+  return best;
+}
+
+function showSlotHint(p, hit) {
+  if (!slotHint) return;
+  if (!hit) { slotHint.setAttribute('opacity', 0); return; }
+  const d = p._dims, a2 = ROT_MAX * D2R, ca = Math.cos(a2), sa = Math.sin(a2);
+  const bw = d.pw * ca + d.ph * sa, bh = d.pw * sa + d.ph * ca;
+  const rot = angOf(p.uid) * D2R, ly = PIN_Y - d.ph / 2;
+  const cx = hit.slot.ax + ly * Math.sin(rot), cy = hit.slot.ay - ly * Math.cos(rot);
+  slotHint.setAttribute('x', nf(cx - bw / 2));
+  slotHint.setAttribute('y', nf(cy - bh / 2));
+  slotHint.setAttribute('width', nf(bw));
+  slotHint.setAttribute('height', nf(bh));
+  slotHint.setAttribute('opacity', 0.9);
 }
 
 function onPhotoMove(ev) {
@@ -1673,18 +1803,37 @@ function onPhotoMove(ev) {
   const lx = 0, ly = 9 - d.ph / 2;
   p._pinBoard = [nx + lx * c2 - ly * s2, ny + lx * s2 + ly * c2];
   updateYarnFor(p);
+  // 拖动时用虚框标出「松手会落到哪个槽位」
+  dragPhoto.hit = nearestRingSlot(p._pinBoard[0], p._pinBoard[1]);
+  showSlotHint(p, dragPhoto.hit);
 }
 
 function onPhotoUp(ev) {
   if (!dragPhoto) return;
-  const p = dragPhoto.p;
-  if (dragPhoto.moved) {
-    p.pos = [p._cx, p._cy];
-    p._skipClick = true;
-    syncPopReset();
-  }
+  const p = dragPhoto.p, hit = dragPhoto.hit, moved = dragPhoto.moved;
   dragPhoto.el.classList.remove('dragging');
   dragPhoto = null;
+  if (slotHint) slotHint.setAttribute('opacity', 0);
+  if (!moved) return;                       // 没挪动 → 交给 click 去开大图
+  p._skipClick = true;
+  if (hit) {
+    /* 手指落在哪一位，就记哪一位 —— 不做"就近另找零交叉位次"的自动改判。
+       理由：改判会让照片落在用户没指的地方，比多两根交叉线更让人困惑。
+       位次冲突导致连线交叉时，提示里说清根数，并留一条「自动排位」的退路。 */
+    const want = hit.rank;
+    p.rank = want;
+    patchPhotoRec(p);
+    syncScheduleIndex(1200);
+    renderPhotos();
+    const xw = (layoutInfo && layoutInfo.x) || 0;
+    showHint('已排到第 ' + (want + 1) + ' 位（绕地图一圈数）'
+      + (hit.shifted ? '，再往前会让红线交叉，就落在了最近的不交叉位置' : '')
+      + (xw ? '。这个顺序有 ' + xw + ' 根线难免交叉 —— 点开这张看大图可以「自动排位」' : '')
+      + '。想恢复自动排位：点开这张看大图 → 「自动排位」。', 7000);
+  } else {
+    renderPhotos();                         // 一个槽位都没有（单张照片）：弹回原位
+  }
+  syncPopReset();
 }
 
 /* 地图平移 + 滚轮缩放 */
@@ -1812,11 +1961,11 @@ function fitViewerImg() {
   viewerImg.style.height = Math.round(nh * k) + 'px';
 }
 
-/* 「回原位」只在照片被手动拖过时可用 */
+/* 「自动排位」只在这张照片被手动排过序时可用 */
 function syncPopReset() {
   const btn = document.getElementById('popReset');
   const p = photos.find(function (q) { return q.uid === popUid; });
-  btn.hidden = !(p && p.pos);
+  btn.hidden = !(p && p.rank != null);
 }
 
 function openViewer(uid) {
@@ -1856,9 +2005,11 @@ popCity.addEventListener('change', function () {
 document.getElementById('popReset').addEventListener('click', function () {
   const p = photos.find(function (q) { return q.uid === popUid; });
   if (!p) return;
-  p.pos = null;
+  p.rank = null;
+  patchPhotoRec(p);
   renderPhotos();
   syncPopReset();
+  showHint('这张已经回到自动排位。', 3000);
 });
 document.getElementById('popDel').addEventListener('click', function () {
   const uid = popUid;
@@ -1900,6 +2051,8 @@ function makePhoto(city) {
     url: null, w: 1, h: 1,
     city: city,
     lon: c.lon, lat: c.lat,
+    cc: '中国',
+    rank: null,              // 拖过就是「绕地图一圈的第几号位」，null = 自动排
     locked: false
   };
 }
@@ -1912,6 +2065,7 @@ function useDemo() {
       url: d.uri, w: d.w, h: d.h,
       lon: d.lon, lat: d.lat,
       city: locateLabel(d.lon, d.lat),
+    cc: countryOf(d.lon, d.lat) || '',
       locked: false, demo: true
     });
   });
@@ -1920,6 +2074,57 @@ function useDemo() {
   renderPhotos();
   resetView(true);
   syncGranState();
+}
+
+/* 认出 iPhone 的 HEIC/HEIF：靠 ftyp 盒的 brand，不靠扩展名（微信下载常常没扩展名）。
+   这一步只用来把提示说准 —— 别把一张坏 JPEG 也说成"HEIC 格式"。 */
+function isHeicFile(file) {
+  return new Promise(function (res) {
+    try {
+      const fr = new FileReader();
+      fr.onload = function () {
+        const b = new Uint8Array(fr.result || []);
+        if (b.length < 12) return res(false);
+        const box = String.fromCharCode(b[4], b[5], b[6], b[7]);
+        const brand = String.fromCharCode(b[8], b[9], b[10], b[11]);
+        res(box === 'ftyp' && /^(heic|heix|hevc|hevx|heim|heis|mif1|msf1)$/.test(brand));
+      };
+      fr.onerror = function () { res(false); };
+      fr.readAsArrayBuffer(file.slice(0, 32));
+    } catch (e) { res(false); }
+  });
+}
+
+/* HEIC/HEIF → JPEG：只在"这个浏览器自己能解 HEIF"时才成功（目前是 Safari / iOS）。
+   做法是把文件塞给 <img>：能解码就画到 canvas 取 JPEG，用户完全无感；
+   Chrome / Firefox 走不通，返回 null，由上层给出"换格式"的说明。 */
+function heicToJpeg(file) {
+  return new Promise(function (res) {
+    let u = null;
+    try { u = URL.createObjectURL(file); } catch (e) { res(null); return; }
+    const im = new Image();
+    let done = false;
+    const fin = function (v) {
+      if (done) return;
+      done = true;
+      try { URL.revokeObjectURL(u); } catch (e) {}
+      res(v);
+    };
+    im.onload = function () {
+      try {
+        if (!im.naturalWidth) return fin(null);
+        const W = Math.min(im.naturalWidth, 1600);
+        const H = Math.max(1, Math.round(im.naturalHeight * W / im.naturalWidth));
+        const c = document.createElement('canvas');
+        c.width = W; c.height = H;
+        const cx = c.getContext('2d');
+        cx.drawImage(im, 0, 0, W, H);
+        fin({ url: c.toDataURL('image/jpeg', 0.86), w: W, h: H });
+      } catch (e) { fin(null); }
+    };
+    im.onerror = function () { fin(null); };
+    im.src = u;
+  });
 }
 
 function readAsDataURL(file) {
@@ -1985,7 +2190,9 @@ function savePhotoRec(p, file) {
     return st.put({
       uid: p.uid, cid: p.cid || '', blob: file, w: p.w, h: p.h,
       lon: p.lon, lat: p.lat, city: p.city,
+      cc: p.cc || '',
       gps: !!p.gps, ts: p.ts || Date.now(),
+      rank: p.rank == null ? null : p.rank,
     });
   }).catch(function () { return null; });
 }
@@ -2004,6 +2211,8 @@ function patchPhotoRec(p) {
         const rec = g.result;
         if (!rec) return;
         rec.lon = p.lon; rec.lat = p.lat; rec.city = p.city; rec.gps = !!p.gps;
+        rec.cc = p.cc || '';
+        rec.rank = p.rank == null ? null : p.rank;
         if (p.cid) rec.cid = p.cid;
         try { st.put(rec); } catch (e) { }
       };
@@ -2047,6 +2256,7 @@ async function restoreFromDB() {
       w: r.w || 4, h: r.h || 5,
       lon: r.lon, lat: r.lat, city: r.city,
       gps: !!r.gps, locked: true, ts: r.ts || Date.now(),
+      rank: typeof r.rank === 'number' ? r.rank : null,
     });
   }
   if (!out.length) return 0;
@@ -2161,6 +2371,37 @@ function markSync(st, note) {
   }
 }
 
+/* 云端只存"中等尺寸"版本：长边 1600、JPEG 0.8（约 200~400 KB）。
+   原图留在本机 IndexedDB 和 NAS 归档里 —— Cloudflare KV 免费额度只有 1 GB 存储、
+   每天 1000 次写，一张 8 MB 的原图能吃掉半面墙的额度。
+   本机上仍然用原图（导出、预览都按原图渲染），只有上传那一份是压过的。 */
+const CLOUD_MAX_SIDE = 1600;
+const CLOUD_Q = 0.8;
+function shrinkForCloud(p) {
+  return new Promise(function (res) {
+    if (!p.url || p.demo) return res(null);
+    const im = new Image();
+    im.onload = function () {
+      try {
+        const nw = im.naturalWidth, nh = im.naturalHeight;
+        if (!nw || !nh) return res(null);
+        const k = Math.min(1, CLOUD_MAX_SIDE / Math.max(nw, nh));
+        const W = Math.max(1, Math.round(nw * k));
+        const H = Math.max(1, Math.round(nh * k));
+        const c = document.createElement('canvas');
+        c.width = W; c.height = H;
+        const cx = c.getContext('2d');
+        cx.imageSmoothingEnabled = true;
+        cx.imageSmoothingQuality = 'high';
+        cx.drawImage(im, 0, 0, W, H);
+        c.toBlob(function (b) { res(b); }, 'image/jpeg', CLOUD_Q);
+      } catch (e) { res(null); }
+    };
+    im.onerror = function () { res(null); };
+    im.src = p.url;
+  });
+}
+
 /* 单张原图上传。file 优先用原始 File（省一次转码），恢复出来的照片用 dataURL 转 Blob */
 async function photoBlob(p) {
   if (p._file) return p._file;
@@ -2170,7 +2411,8 @@ async function photoBlob(p) {
 
 async function syncPutPhoto(p) {
   if (!syncAllowed() || p.demo || !p.cid) return false;
-  const blob = await photoBlob(p);
+  // 先压到云端版本；压不出来（画布被禁用等）才退回原图
+  const blob = (await shrinkForCloud(p)) || (await photoBlob(p));
   if (!blob) return false;
   if (blob.size > 8 * 1024 * 1024) return false;      // 服务端上限 8 MB
   const r = await syncCall('/blob?id=' + encodeURIComponent(p.cid)
@@ -2196,7 +2438,7 @@ async function syncPushIndex() {
     return {
       id: p.cid, name: p._name || '', bytes: p._bytes || 0,
       w: p.w, h: p.h, lon: p.lon, lat: p.lat, city: p.city,
-      ts: p.ts || Date.now(), t: 'image/jpeg',
+      cc: p.cc || '',       ts: p.ts || Date.now(), rank: p.rank == null ? null : p.rank, t: 'image/jpeg',
     };
   });
   try {
@@ -2274,7 +2516,9 @@ async function syncPull() {
       uid: uidSeq++, cid: rec.id, url: url,
       w: rec.w || 4, h: rec.h || 5, lon: rec.lon, lat: rec.lat,
       city: rec.city || locateLabel(rec.lon, rec.lat),
+      cc: rec.cc || countryOf(rec.lon, rec.lat) || '',
       gps: true, locked: true, ts: rec.ts || Date.now(),
+      rank: typeof rec.rank === 'number' ? rec.rank : null,
     });
   }
   if (out.length) {
@@ -2496,6 +2740,25 @@ function nearestCity(lon, lat) {
   }
   return best;
 }
+/* 国外照片的落点：先用全球城市表，找不到再退到国家名。
+   距离给到 90km —— 大部分人拍照就在城里或城郊，落「国家」太粗，落错城市比落国家更糟。 */
+function nearestCityW(lon, lat) {
+  let best = null, bd = Infinity;
+  for (let i = 0; i < CITIES_W.length; i++) {
+    const c = CITIES_W[i];
+    const dy = (c[3] - lat) * 111;
+    const dx = (c[2] - lon) * 111 * Math.cos((c[3] + lat) / 2 * D2R);
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bd) { bd = d2; best = { name: c[0], country: c[1], km: Math.sqrt(d2) }; }
+  }
+  return best;
+}
+/* 国家名 → 大洲（WORLD 里每个国家带 k 字段，构建时由 CONTINENT 翻译好） */
+function continentOf(country) {
+  for (let i = 0; i < WORLD.length; i++) if (WORLD[i].n === country) return WORLD[i].k || '';
+  return '';
+}
+
 function pipRing(ring, x, y) {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -2522,8 +2785,11 @@ function shortProv(name) {
 function locateLabel(lon, lat) {
   // 先判国界：出国的照片不能落到「最近的中国城市」上（那是明显错的）
   if (!inChina(lon, lat)) {
+    const wc = nearestCityW(lon, lat);
     const cn = countryOf(lon, lat);
+    if (wc && wc.km <= 90) return wc.name;
     if (cn && cn !== '中国') return cn;
+    if (wc) return wc.name;
   }
   const nc = nearestCity(lon, lat);
   if (nc && nc.km <= 120) return nc.name;
@@ -2550,7 +2816,7 @@ async function addFiles(files) {
   const take = arr.slice(0, room);
   const over = arr.length - take.length;
 
-  let bad = 0, noGps = 0;
+  let bad = 0, badHeic = 0, noGps = 0, heicFixed = 0;
   let sawOutside = false;      // 有照片落在国外 → 中国档下自动切「全球」
   const syncList = [];         // 待上传到「同一面墙」的照片
   const btnAdd = document.getElementById('btnAdd');
@@ -2561,9 +2827,16 @@ async function addFiles(files) {
     if (take.length > 2 && i < take.length - 1) {
       showHint('正在读取 ' + (i + 1) + ' / ' + take.length + ' 张…', 120000);
     }
-    const url = await readAsDataURL(take[i]);
-    const sz = await loadSize(url);
-    if (sz.w < 8) { bad++; continue; }   // 浏览器解不了（多为 iPhone 的 HEIC）
+    let url = await readAsDataURL(take[i]);
+    let sz = await loadSize(url);
+    if (sz.w < 8) {
+      /* 浏览器解不了：绝大多数是 iPhone 的 HEIC。Safari 自己能解 HEIF，
+         就地在本地转成 JPEG 继续用（用户无感）；Chrome/Firefox 解不了才计数。 */
+      const isHeic = await isHeicFile(take[i]);
+      const conv = isHeic ? await heicToJpeg(take[i]) : null;
+      if (conv) { url = conv.url; sz = { w: conv.w, h: conv.h }; heicFixed++; }
+      else { bad++; if (isHeic) badHeic++; continue; }
+    }
     const p = makePhoto(CITIES[0][0]);
     p.url = url; p.w = sz.w; p.h = sz.h;
     p._file = take[i];
@@ -2577,6 +2850,7 @@ async function addFiles(files) {
       p.lon = gps.lon; p.lat = gps.lat;
       if (!inChina(p.lon, p.lat)) sawOutside = true;
       p.city = locateLabel(p.lon, p.lat);
+      p.cc = countryOf(p.lon, p.lat) || '';   // 国家单独存：标签可能是城市名，粒度取景要国家
       p.gps = true;
       p.locked = true;
     } else {
@@ -2584,6 +2858,7 @@ async function addFiles(files) {
       p.city = nextCity();
       const c = CITY_INDEX[p.city];
       p.lon = c.lon; p.lat = c.lat;
+      p.cc = '中国';
       noGps++;
     }
     photos.push(p);
@@ -2612,13 +2887,18 @@ async function addFiles(files) {
 
   // 结尾只说最要紧的那一句（HEIC 比「位置待确认」更影响结果，优先说它）
   const parts = [];
-  if (bad) {
-    // HEIC 是 iPhone 默认格式，Chrome / 微信内置浏览器都解不了，只有 Safari 能解。
+  if (badHeic) {
+    // HEIC 是 iPhone 默认格式；Safari 能就地转码（已在上面转掉），Chrome / 微信内置浏览器不行。
     // 这句话直接把出路给出去，别让人以为是页面坏了。
-    parts.push(bad + ' 张解不开（iPhone 的 HEIC 格式）。三个办法任选一个：'
+    parts.push(badHeic + ' 张是 iPhone 的 HEIC 格式，这个浏览器解不开。三个办法任选一个：'
       + '① 用 Safari 打开本页再加；② 在手机「设置 → 相机 → 格式」选「兼容性最佳」后重拍；'
       + '③ 在相册里把这几张分享成 JPEG 再加。');
   }
+  if (bad - badHeic) {
+    // 不是 HEIC 却解不开：多半是文件坏了、或者是 webp/avif 之类的冷门容器
+    parts.push((bad - badHeic) + ' 张图片打不开（文件可能损坏或格式不支持），换一张试试。');
+  }
+  if (heicFixed > 0) parts.push(heicFixed + ' 张 HEIC 已在本机转成 JPEG 加进来了。');
   if (over > 0) parts.push('一面墙最多 40 张，这次只加进来 ' + take.length + ' 张。');
   if (notImage > 0) parts.push(notImage + ' 个非图片文件已跳过。');
   if (noGps > 0) parts.push(noGps + ' 张没有拍摄定位（EXIF），位置是猜的 —— '
@@ -2645,6 +2925,7 @@ function setScope(v, animated) {
   const changed = next !== scope;
   scope = next;
   selScope.value = next;
+  buildGranOptions();       // 中国档是「省」，全球档换成「大洲 / 国家」
   if (!changed) { resetView(animated); return; }
   rebuildCanvas();          // 内部重算 baseView / 省名 / 世界标注
   resetView(animated);
@@ -2655,6 +2936,25 @@ selGran.addEventListener('change', function () {
   resetView(true);
 });
 
+/* 粒度选项跟着地图范围走：中国档是「省」，全球档是「大洲 / 国家」。
+   中国的省和世界的国家都是"一级行政区"，但叫法必须对得上用户脑子里的那张图。 */
+const GRAN_CN = [['all', '全部'], ['prov', '省'], ['city', '城市']];
+const GRAN_WORLD = [['all', '全部'], ['cont', '大洲'], ['country', '国家'], ['city', '城市']];
+function buildGranOptions() {
+  const list = scope === 'world' ? GRAN_WORLD : GRAN_CN;
+  const keep = granMode;
+  selGran.textContent = '';
+  for (let i = 0; i < list.length; i++) {
+    const o = document.createElement('option');
+    o.value = list[i][0];
+    o.textContent = '粒度：' + list[i][1];
+    selGran.appendChild(o);
+  }
+  const hit = list.some(function (x) { return x[0] === keep; });
+  granMode = hit ? keep : 'all';
+  selGran.value = granMode;
+}
+
 /* 粒度档在「只有示例照片」时没有意义：灰掉并退回「全部」 */
 function syncGranState() {
   const real = photos.some(function (p) { return !p.demo; });
@@ -2663,7 +2963,8 @@ function syncGranState() {
     granMode = 'all';
     selGran.value = 'all';
   }
-  selGran.title = real ? '缩放粒度：全部 / 省 / 城市' : '上传照片后可切换取景粒度';
+  const names = (scope === 'world' ? GRAN_WORLD : GRAN_CN).map(function (x) { return x[1]; }).join(' / ');
+  selGran.title = real ? ('缩放粒度：' + names) : '上传照片后可切换取景粒度';
 }
 
 /* 按粒度算出「要框住的 uv 范围」；返回 null 表示交给默认的打卡点外接框 */
@@ -2677,7 +2978,24 @@ function granBox() {
     hit++;
   };
 
-  if (granMode === 'prov') {
+  if (granMode === 'cont' || granMode === 'country') {
+    /* 全球档：大洲 = 该大洲所有国家的外接框并起来；国家 = 那一个国家。
+       一个国家可能跨大洲（俄罗斯、土耳其），照片落哪就取哪边的国家集合，够用。 */
+    const seen = {};
+    for (let i = 0; i < photos.length; i++) {
+      const ph = photos[i];
+      const cc = ph.cc || countryOf(ph.lon, ph.lat) || '';
+      const key = granMode === 'cont' ? continentOf(cc) : cc;
+      if (!key || seen[key]) continue;
+      seen[key] = 1;
+      for (let j = 0; j < WORLD.length; j++) {
+        const hitIt = granMode === 'cont' ? (WORLD[j].k === key) : (WORLD[j].n === key);
+        if (!hitIt) continue;
+        const b = worldBox[j];
+        if (b) grow(b.u0, b.u1, b.v0, b.v1);
+      }
+    }
+  } else if (granMode === 'prov') {
     const seen = {};
     for (let i = 0; i < photos.length; i++) {
       const nm = provinceOf(photos[i].lon, photos[i].lat);
@@ -2805,12 +3123,23 @@ function quietHint() {
 }
 
 /* ------------------------------------------------------------- 导出 --- */
+/* 导出高度基准 1200，再乘 2 输出 —— 4K 屏上看、或者拿去打印都够清楚。
+   2× 超采样只在输出本身不大时才做：2400 高的成品再乘 2 就是 4800，手机上会 OOM。 */
 const EXPORT_H = 1200;
+const EXPORT_SCALE = 2;
+const EXPORT_MAX_PX = 3.2e7;      // 3200 万像素上限（约 7300×4400），超了等比收
+const EXPORT_SS_MAX_PX = 1.4e7;   // 超过这个像素数就不再做 2× 超采样
 async function exportPNG() {
   hideViewer();
   showHint('正在导出…', 60000);
   // 导出按当前画布比例，长边固定 1200 高 → 宽随画布比例
-  const outH = EXPORT_H, outW = Math.round(outH * BW / BH);
+  let outH = EXPORT_H * EXPORT_SCALE;
+  let outW = Math.round(outH * BW / BH);
+  if (outW * outH > EXPORT_MAX_PX) {
+    const k = Math.sqrt(EXPORT_MAX_PX / (outW * outH));
+    outH = Math.round(outH * k);
+    outW = Math.round(outW * k);
+  }
   const clone = board.cloneNode(true);
   clone.setAttribute('width', outW);
   clone.setAttribute('height', outH);
@@ -2829,21 +3158,45 @@ async function exportPNG() {
       im.onerror = function () { rej(new Error('SVG 光栅化失败')); };
       im.src = url;
     });
+    /* 2× 超采样：先按两倍尺寸光栅化，再缩回目标尺寸。
+       SVG 里的文字和描边在浏览器里是矢量、到 2× 才足够采样密度，
+       直接 1× 光栅化再放大只会更糊。 */
+    const SS = (outW * outH) > EXPORT_SS_MAX_PX ? 1 : 2;
+    const big = document.createElement('canvas');
+    big.width = outW * SS; big.height = outH * SS;
+    const bx = big.getContext('2d');
+    bx.fillStyle = '#140E0A';
+    bx.fillRect(0, 0, big.width, big.height);
+    bx.drawImage(img, 0, 0, big.width, big.height);
     const cv = document.createElement('canvas');
     cv.width = outW; cv.height = outH;
     const ctx = cv.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.fillStyle = '#140E0A';
     ctx.fillRect(0, 0, outW, outH);
-    ctx.drawImage(img, 0, 0, outW, outH);
+    ctx.drawImage(big, 0, 0, outW, outH);
     cv.toBlob(function (b) {
       if (!b) return;
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(b);
       // 用本地日期，不要用 toISOString()：那是 UTC，中国用户 0-8 点导出会拿到前一天的日期
       const d = new Date();
       const stamp = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
         + '-' + String(d.getDate()).padStart(2, '0');
-      a.download = '照片地图墙-' + stamp + '.png';
+      const name = '照片地图墙-' + stamp + '.png';
+      const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+      const file = new File([b], name, { type: 'image/png' });
+      if (isIOS && navigator.canShare && navigator.canShare({ files: [file] })) {
+        // iOS 没有"下载"这个概念：走系统分享面板，用户能直接「存储图像」进相册
+        navigator.share({ files: [file], title: '照片地图墙' }).then(function () {
+          showHint('已打开系统分享面板：选「存储图像」就进相册了', 6000);
+        }, function () {
+          showHint('分享被取消。想再试就再点一次导出。', 5000);
+        });
+        return;
+      }
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(b);
+      a.download = name;
       a.rel = 'noopener';
       // 必须挂到文档里再点：Firefox 对游离节点的 download 不生效；
       // iOS Safari 会退化成新标签打开图片，用户长按仍能存下来。
@@ -2851,7 +3204,8 @@ async function exportPNG() {
       document.body.appendChild(a);
       a.click();
       // 说清楚导的是什么：当前视野（放大过某省时，导出的就是那个局部）
-      showHint('已导出 ' + outW + ' × ' + outH + '（当前视野）', 6000);
+      showHint('已导出 ' + outW + ' × ' + outH + '（当前视野'
+        + ((outW * outH) > EXPORT_SS_MAX_PX ? '' : '，2× 超采样') + '）', 6000);
       setTimeout(function () {
         if (a.parentNode) a.parentNode.removeChild(a);
         URL.revokeObjectURL(a.href);
@@ -2893,6 +3247,7 @@ function rebuildCanvas() {
 
 function boot() {
   board.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  buildGranOptions();   // 粒度下拉的选项跟着地图范围走，进页面就得摆对
   computeCanvas();
   placeCard();
 
@@ -2967,6 +3322,37 @@ window.__dbg = {
         ax: c ? Math.round(c.ax) : null, ay: c ? Math.round(c.ay) : null };
     });
   },
+  // 测试用：直接给某张照片设/清名次（等价于一次拖动，但不经过指针事件）
+  setRank: function (uid, rank) {
+    const p = photos.find(function (q) { return q.uid === uid; });
+    if (!p) return false;
+    p.rank = (rank === null || rank === undefined) ? null : rank;
+    patchPhotoRec(p);
+    renderPhotos();
+    return true;
+  },
+  // 诊断：绕地图一圈的实际排位（拖动排序的验收依据）
+  ringRot: function () { return ringRotDbg; },
+  ringSortedDbg: function () { return (layoutInfo && layoutInfo.dbg) || ringOrderDbg; },
+  order: function () {
+    if (!layoutInfo || !layoutInfo.cells) return [];
+    const out = [];
+    layoutInfo.cells.forEach(function (c, uid) {
+      const p = photos.find(function (q) { return q.uid === uid; });
+      out.push({ rank: c.rank, uid: uid, city: p ? p.city : null });
+    });
+    out.sort(function (a, b) { return a.rank - b.rank; });
+    return out;
+  },
+  // 诊断：环形槽位的屏幕坐标（拖动排序的测试要拿它当落点）
+  ringScreen: function () {
+    if (!layoutInfo || !layoutInfo.ring) return [];
+    const m = layerPhotos.getScreenCTM();
+    return layoutInfo.ring.map(function (s, i) {
+      const pt = m ? new DOMPoint(s.ax, s.ay).matrixTransform(m) : null;
+      return { rank: i, x: pt ? +pt.x.toFixed(1) : 0, y: pt ? +pt.y.toFixed(1) : 0 };
+    });
+  },
   // 诊断：排布用的锚点（cell.ax/ay）与实际画线用的端点（_pinBoard）是否一致
   ends: function () {
     return photos.map(function (p) {
@@ -2974,7 +3360,7 @@ window.__dbg = {
       return { uid: p.uid, city: p.city,
         ax: c ? +c.ax.toFixed(1) : null, ay: c ? +c.ay.toFixed(1) : null,
         pb: p._pinBoard ? [+p._pinBoard[0].toFixed(1), +p._pinBoard[1].toFixed(1)] : null,
-        pos: p.pos ? [+p.pos[0].toFixed(1), +p.pos[1].toFixed(1)] : null };
+        pos: p.rank == null ? null : p.rank };
     });
   },
   // 诊断「哪些红线在交叉、交叉的两条线各在哪条走廊」——排布单调性排查用
