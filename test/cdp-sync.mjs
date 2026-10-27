@@ -97,7 +97,7 @@ async function cities() {
   const raw = await (await fetch(`http://127.0.0.1:${HTTP_PORT}/api/wall/index`,
     { headers: { 'x-wall-key': i1.key } })).json();
   t.ok('服务端清单 3 条', (raw.photos || []).length === 3, JSON.stringify(raw.photos && raw.photos.length));
-  t.ok('服务端存了原图字节', (raw.photos || []).every((p) => p.bytes > 0), JSON.stringify(raw.photos));
+  t.ok('服务端存的是压过的中等尺寸版本（长边≤1600、≤1.5MB）', (raw.photos || []).every((p) => p.bytes > 0 && p.bytes <= 1.5 * 1024 * 1024 && p.t === 'image/jpeg'), JSON.stringify(raw.photos));
 
   // ---- 模拟「换一台设备」：清身份 + 清本地库 ----
   await t.evaluate("localStorage.removeItem('pmw.wallKey');document.cookie='pmw_key=; path=/; max-age=0';'ok'");
