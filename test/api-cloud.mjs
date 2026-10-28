@@ -42,8 +42,10 @@ const jpost = (path, body, k) =>
 const jget = (path, k) => fetch(API + path, { headers: H(k) });
 
 const PHOTOS = [
-  { id: 'p_beijing01', name: '北京.jpg', bytes: TINY.length, w: 1, h: 1, lon: 116.4074, lat: 39.9042, city: '北京', ts: 1, t: 'image/jpeg' },
-  { id: 'p_tokyo0002', name: '東京.jpg', bytes: TINY.length, w: 1, h: 1, lon: 139.6503, lat: 35.6762, city: '日本', ts: 2, t: 'image/jpeg' },
+  { id: 'p_beijing01', name: '北京.jpg', bytes: TINY.length, w: 1, h: 1, lon: 116.4074, lat: 39.9042, city: '北京',
+    cc: '中国', pos: { fx: 0.234, fy: 0.765 }, ts: 1, t: 'image/jpeg' },
+  { id: 'p_tokyo0002', name: '東京.jpg', bytes: TINY.length, w: 1, h: 1, lon: 139.6503, lat: 35.6762, city: '日本',
+    cc: '日本', pos: null, ts: 2, t: 'image/jpeg' },
 ];
 
 console.log('目标：' + API + '\n');
@@ -86,6 +88,11 @@ ok('写清单返回同步码', r.status === 200 && o.count === 2 && /^[A-Z2-9]{4
 r = await jget('/index', KEY); o = await r.json();
 ok('读回清单 = 2 张，地点/经纬度没被改', r.status === 200 && o.exists === true && o.photos.length === 2
   && o.photos[0].city === '北京' && Math.abs(o.photos[1].lon - 139.6503) < 1e-6, JSON.stringify(o.photos.map((p) => p.city)));
+
+// 6b) 手动摆放位置与国家名要能过服务端白名单（自由拖动 / 全球档的跨设备前提）
+ok('手动摆放位置存住了', !!(o.photos[0].pos && Math.abs(o.photos[0].pos.fx - 0.234) < 1e-6
+  && Math.abs(o.photos[0].pos.fy - 0.765) < 1e-6), JSON.stringify(o.photos[0].pos));
+ok('国家名存住了', o.photos[1].cc === '日本', String(o.photos[1].cc));
 
 // 7) 换设备：用同步码换回 key（这是「朋友退出重进 / 换手机」的核心路径）
 r = await jpost('/pair', { code: code.replace(/-/g, '').toLowerCase() });
