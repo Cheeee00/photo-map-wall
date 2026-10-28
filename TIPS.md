@@ -27,6 +27,8 @@ Node 24 的全局 `fetch` 走 keep-alive 连接池，进程退出时会在 libuv
 `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`，退出码被改成 1（或 `0xC0000409`）——
 **跟「核对失败」的退出码一模一样**，极易误判。`tools/check_github.mjs` 改走 `curl.exe` 才干净。
 
+**复核不能只看 summary 行**：`gh_push.ps1` 对失败的单个文件会打一行 `  ! <path> FAILED: <msg>`，而 `summary: added/updated/skipped` 里**不包含失败数**。`Select-Object -Last 4` 之类只看尾巴就会把失败吃掉——2026-10-28 就这么让 `src/index.template.html`（157 KB）连着两轮没上去，而 summary 看着正常。判据永远是 `node tools/check_github.mjs`；真卡住时用 `curl -X PUT --data-binary @body.json` 单文件推一次就能过。
+
 ## Windows / Node
 
 **`.NET` 的 `[IO.File]` 不吃 PowerShell 的当前目录**：`cd` 之后写 `[IO.File]::ReadAllText('README.md')` 仍按进程初始目录解析，报 `Could not find file 'D:\DSH\创业项目\README.md'`。要么传绝对路径，要么干脆用 edit/write 工具改文件。
