@@ -27,6 +27,7 @@ const PREFIX = '/api/wall';
 const MAX_BLOB = 8 * 1024 * 1024;      // 单张 8 MB
 const MAX_INDEX = 256 * 1024;          // 清单 256 KB
 const MAX_PHOTOS = 80;                 // 一面墙最多 80 张
+const clamp01 = (v) => (typeof v === 'number' && v >= 0 ? (v > 1 ? 1 : v) : 0);
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去掉 I L O 0 1 这些易混字符
 
 // ---------------------------------------------------------------- 小工具
@@ -161,6 +162,10 @@ export const onRequest = async (ctx) => {
         lon: Number(p.lon),
         lat: Number(p.lat),
         city: String(p.city || '').slice(0, 40),
+        cc: String(p.cc || '').slice(0, 40),
+        // 手动摆放位置（0–1 相对画布）：存相对值，换窗口大小也不会跑出画面
+        pos: (p.pos && typeof p.pos.fx === 'number' && typeof p.pos.fy === 'number')
+          ? { fx: clamp01(p.pos.fx), fy: clamp01(p.pos.fy) } : null,
         ts: Number(p.ts) || 0,
         t: String(p.t || 'image/jpeg').slice(0, 40),
       }));
