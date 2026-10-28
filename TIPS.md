@@ -29,6 +29,9 @@ Node 24 的全局 `fetch` 走 keep-alive 连接池，进程退出时会在 libuv
 
 ## Windows / Node
 
+**`.NET` 的 `[IO.File]` 不吃 PowerShell 的当前目录**：`cd` 之后写 `[IO.File]::ReadAllText('README.md')` 仍按进程初始目录解析，报 `Could not find file 'D:\DSH\创业项目\README.md'`。要么传绝对路径，要么干脆用 edit/write 工具改文件。
+
+
 ### 删「刚被浏览器写完的图片」会让 node 硬崩
 
 `fs.rmSync()` 一个刚下载完的 PNG，node 进程会以 **`0xC0000409`（`__fastfail`）** 退出，**没有任何堆栈、没有任何输出**。
