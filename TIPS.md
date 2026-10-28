@@ -27,7 +27,9 @@ Node 24 的全局 `fetch` 走 keep-alive 连接池，进程退出时会在 libuv
 `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`，退出码被改成 1（或 `0xC0000409`）——
 **跟「核对失败」的退出码一模一样**，极易误判。`tools/check_github.mjs` 改走 `curl.exe` 才干净。
 
-**复核不能只看 summary 行**：`gh_push.ps1` 对失败的单个文件会打一行 `  ! <path> FAILED: <msg>`，而 `summary: added/updated/skipped` 里**不包含失败数**。`Select-Object -Last 4` 之类只看尾巴就会把失败吃掉——2026-10-28 就这么让 `src/index.template.html`（157 KB）连着两轮没上去，而 summary 看着正常。判据永远是 `node tools/check_github.mjs`；典型失败信息还有 ``"sha" wasn't supplied``（读远端元信息的 GET 没拿到 sha，PUT 就必然 400）和 ``does not match <sha>``（并发写冲突）。真卡住时用 ``curl -X PUT --data-binary @body.json`` 单文件推一次就能过 —— 2026-10-28 就是这样把 ``src/index.template.html`` 与三张 demo 图片补上去的。
+****`! FAILED` 也可能是假的** —— 报 `"sha" wasn't supplied` 时，多半是读远端元信息的那次 GET 没回来，于是它带着空的 sha 去 PUT（必然 400），而**文件内容其实早就一致**。所以两边都不能信：不信 summary，也不信 FAILED，只信 `node tools/check_github.mjs`。
+
+**复核不能只看 summary 行****：`gh_push.ps1` 对失败的单个文件会打一行 `  ! <path> FAILED: <msg>`，而 `summary: added/updated/skipped` 里**不包含失败数**。`Select-Object -Last 4` 之类只看尾巴就会把失败吃掉——2026-10-28 就这么让 `src/index.template.html`（157 KB）连着两轮没上去，而 summary 看着正常。判据永远是 `node tools/check_github.mjs`；典型失败信息还有 ``"sha" wasn't supplied``（读远端元信息的 GET 没拿到 sha，PUT 就必然 400）和 ``does not match <sha>``（并发写冲突）。真卡住时用 ``curl -X PUT --data-binary @body.json`` 单文件推一次就能过 —— 2026-10-28 就是这样把 ``src/index.template.html`` 与三张 demo 图片补上去的。
 
 ## Windows / Node
 
