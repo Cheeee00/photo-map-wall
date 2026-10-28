@@ -477,7 +477,7 @@ const board = document.getElementById('board');
 const stage = document.getElementById('stage');
 let defsEl = el('defs', null, board);
 
-let layerBoard, layerCard, layerMapClip, layerMapContent, layerPins, layerYarn, layerPhotos, layerHint, slotHint;
+let layerBoard, layerCard, layerMapClip, layerMapContent, layerPins, layerYarn, layerPhotos, layerHint;
 
 /* ------------------------------------------------------------- 构建背景 --- */
 function buildBoard() {
@@ -943,11 +943,6 @@ function buildPhotosLayer() {
   layerYarn = el('g', { id: 'gYarn' }, board);
   layerYarnInner = el('g', null, layerYarn);
   layerHint = el('g', { id: 'gHint', 'pointer-events': 'none' }, board);
-  slotHint = el('rect', {
-    id: 'slotHint', x: 0, y: 0, width: 0, height: 0, rx: 4,
-    fill: 'rgba(192,57,43,.10)', stroke: '#C0392B', 'stroke-width': 2,
-    'stroke-dasharray': '7 5', opacity: 0, 'vector-effect': 'non-scaling-stroke'
-  }, layerHint);
 }
 
 function polDims(p, contentW) {
@@ -1417,29 +1412,39 @@ function renderPhotos() {
 
   if (!photos.length) { layoutInfo = null; return; }
 
+  /* 手动摆过的照片（p.pos）不参加自动排布：位置由用户定，混进求解器只会白占槽位、
+     把别的照片挤到更差的位置。它们在图循环里按坐标直接放。 */
+  const autoList = photos.filter(function (p) { return !p.pos; });
+
   // 找合适的内容宽：先用二分找「放得下的最大档」，再往下试两档取交叉最少的
   const tryList = [200, 190, 180, 170, 160, 150, 140, 130, 120, 110, 100, 92, 84, 76, 68, 60, 54, 48, 42];
   const gapOf = function (w) { return w < 140 ? 8 : 14; };
+  let lay = null, contentW = tryList[tryList.length - 1];
+  if (!autoList.length) {
+    // 每一张都被手动摆过 → 不需要排布，只要定一个统一的内容宽度
+    contentW = clamp(Math.round(BW / 12), 60, 170);
+    lay = { fits: true, cells: new Map(), x: 0, ring: [] };
+  }
   let lo = 0, hi = tryList.length - 1, firstFit = -1;
+  if (autoList.length) {
   while (lo <= hi) {                       // tryList 单调递减：越大越难放下
     const mid = (lo + hi) >> 1;
-    const r = ringLayout(photos, tryList[mid], gapOf(tryList[mid]), true);
+    const r = ringLayout(autoList, tryList[mid], gapOf(tryList[mid]), true);
     if (r.fits) { firstFit = mid; hi = mid - 1; } else { lo = mid + 1; }
   }
-  let lay = null, contentW = tryList[tryList.length - 1];
   if (firstFit >= 0) {
     /* 先按 probe 的交叉数给候选排序（并列时取照片更大的），再按顺序真优化，
        第一个优化到 0 交叉的就收工；都不为 0 就取交叉最少的。 */
     const cands = [];
     for (let k = firstFit; k < Math.min(firstFit + 3, tryList.length); k++) {
       const w = tryList[k];
-      const r = ringLayout(photos, w, gapOf(w), true);
+      const r = ringLayout(autoList, w, gapOf(w), true);
       if (r.fits) cands.push({ w: w, x: r.x || 0, k: k });
     }
     cands.sort(function (a, b) { return a.x - b.x || a.k - b.k; });
     let bestX = Infinity;
     for (let ci = 0; ci < cands.length; ci++) {
-      const r = ringLayout(photos, cands[ci].w, gapOf(cands[ci].w));
+      const r = ringLayout(autoList, cands[ci].w, gapOf(cands[ci].w));
       if (!r.fits) continue;
       const x = r.x || 0;
       if (!lay || x < bestX) { lay = r; contentW = cands[ci].w; bestX = x; }
@@ -1449,21 +1454,26 @@ function renderPhotos() {
   if (!lay) {
     // 连最小档都放不下：用最小档做阶梯叠放（大档会摊成一片重叠）
     contentW = tryList[tryList.length - 1];
-    lay = cascadeLayout(photos, contentW);
+    lay = cascadeLayout(autoList, contentW);
   }
-  lay.cw = contentW;   // 记住这一轮用的照片宽度，拖动换位时要按同一档重算
+  }
+  lay.cw = contentW;   // 记住这一轮用的照片宽度
   layoutInfo = lay;
 
   for (let i = 0; i < photos.length; i++) {
     const p = photos[i];
+    /* 自动排的用槽位；手动摆过的（p.pos）用存下的相对位置。
+       存 0–1 的相对值而不是像素：换窗口大小后照片还在画面里同一处，不会跑出画布。 */
     const cell = lay.cells.get(p.uid);
-    if (!cell) continue;
-    const d = cell.d;
-
-    // 针固定在槽位锚点上（布局算好的），旋转角由 uid 派生 → 稳定不变
-    const rot = cell.rot;
-    // 位置完全由布局决定（手工拖动通过 p.rank 参与排序，不直接改坐标 → 红线仍不交叉）
-    const cx = cell.cx, cy = cell.cy;
+    let d, rot, cx, cy;
+    if (cell) {
+      d = cell.d; rot = cell.rot; cx = cell.cx; cy = cell.cy;
+    } else if (p.pos) {
+      d = polDims(p, contentW); rot = angOf(p.uid);
+      const hw = (d.pw + d.ph) / 3;
+      cx = clamp(p.pos.fx * BW, hw, BW - hw);
+      cy = clamp(p.pos.fy * BH, hw, BH - hw);
+    } else { continue; }
     p._cx = cx; p._cy = cy; p._rot = rot; p._dims = d;
 
     const g = el('g', {
@@ -1727,9 +1737,9 @@ function onPinUp() {
 }
 
 /* --------------------------------------------------------- 拖动照片 --- */
-/* 照片默认按走廊排布自动定位。拖动 = 换到另一个槽位，记成 p.rank（绕地图一圈的第几号位），
-   而不是记坐标 —— 这样「其余照片自动让位」「换窗口/加照片后顺序不变」「红线始终不交叉」
-   三件事同时成立。坐标法做不到第三点：钉到任意位置后，两根线必然可能相交。 */
+/* 照片默认按走廊自动定位；一旦用户拖过，就记下相对坐标 p.pos = {fx, fy}（0–1，占画布的比例），
+   之后这张照片只按坐标放，谁也不许自动挪它 —— 用户说「随便拖到哪儿」，那就真的到哪儿。
+   代价要如实说：自由摆放后红线可能交叉，松手时会告诉交叉了几根。 */
 let dragPhoto = null;
 
 function photoTransform(p, cx, cy) {
@@ -1752,32 +1762,6 @@ function onPhotoDown(ev, p) {
   try { ev.currentTarget.setPointerCapture && ev.currentTarget.setPointerCapture(ev.pointerId); } catch (e) { }
 }
 
-/* 找离 (x,y) 最近的环形槽位。rank 是这个槽位在「绕卡片一圈」序列里的序号 ——
-   拖到第几个槽位，就等于把这张照片排到第几位，其余照片自动让位。 */
-function nearestRingSlot(x, y) {
-  const ring = layoutInfo && layoutInfo.ring;
-  if (!ring || !ring.length) return null;
-  let best = null, bd = Infinity;
-  for (let i = 0; i < ring.length; i++) {
-    const dx = ring[i].ax - x, dy = ring[i].ay - y, d = dx * dx + dy * dy;
-    if (d < bd) { bd = d; best = { slot: ring[i], rank: i, dist: Math.sqrt(d) }; }
-  }
-  return best;
-}
-
-function showSlotHint(p, hit) {
-  if (!slotHint) return;
-  if (!hit) { slotHint.setAttribute('opacity', 0); return; }
-  const d = p._dims, a2 = ROT_MAX * D2R, ca = Math.cos(a2), sa = Math.sin(a2);
-  const bw = d.pw * ca + d.ph * sa, bh = d.pw * sa + d.ph * ca;
-  const rot = angOf(p.uid) * D2R, ly = PIN_Y - d.ph / 2;
-  const cx = hit.slot.ax + ly * Math.sin(rot), cy = hit.slot.ay - ly * Math.cos(rot);
-  slotHint.setAttribute('x', nf(cx - bw / 2));
-  slotHint.setAttribute('y', nf(cy - bh / 2));
-  slotHint.setAttribute('width', nf(bw));
-  slotHint.setAttribute('height', nf(bh));
-  slotHint.setAttribute('opacity', 0.9);
-}
 
 function onPhotoMove(ev) {
   if (!dragPhoto) return;
@@ -1803,35 +1787,31 @@ function onPhotoMove(ev) {
   const lx = 0, ly = 9 - d.ph / 2;
   p._pinBoard = [nx + lx * c2 - ly * s2, ny + lx * s2 + ly * c2];
   updateYarnFor(p);
-  // 拖动时用虚框标出「松手会落到哪个槽位」
-  dragPhoto.hit = nearestRingSlot(p._pinBoard[0], p._pinBoard[1]);
-  showSlotHint(p, dragPhoto.hit);
 }
 
 function onPhotoUp(ev) {
   if (!dragPhoto) return;
-  const p = dragPhoto.p, hit = dragPhoto.hit, moved = dragPhoto.moved;
+  const p = dragPhoto.p, moved = dragPhoto.moved;
   dragPhoto.el.classList.remove('dragging');
   dragPhoto = null;
-  if (slotHint) slotHint.setAttribute('opacity', 0);
   if (!moved) return;                       // 没挪动 → 交给 click 去开大图
   p._skipClick = true;
-  if (hit) {
+  {
     /* 手指落在哪一位，就记哪一位 —— 不做"就近另找零交叉位次"的自动改判。
        理由：改判会让照片落在用户没指的地方，比多两根交叉线更让人困惑。
        位次冲突导致连线交叉时，提示里说清根数，并留一条「自动排位」的退路。 */
-    const want = hit.rank;
-    p.rank = want;
+    /* 就钉在用户放下的地方。以前是「换到最近的槽位，其余照片让位」，
+       但那样手指只能落在系统给的格子上 —— 用户明确要求「随便拖到哪儿」。 */
+    p.pos = { fx: p._cx / BW, fy: p._cy / BH };
+    p.rank = null;
     patchPhotoRec(p);
     syncScheduleIndex(1200);
     renderPhotos();
-    const xw = (layoutInfo && layoutInfo.x) || 0;
-    showHint('已排到第 ' + (want + 1) + ' 位（绕地图一圈数）'
-      + (hit.shifted ? '，再往前会让红线交叉，就落在了最近的不交叉位置' : '')
-      + (xw ? '。这个顺序有 ' + xw + ' 根线难免交叉 —— 点开这张看大图可以「自动排位」' : '')
-      + '。想恢复自动排位：点开这张看大图 → 「自动排位」。', 7000);
-  } else {
-    renderPhotos();                         // 一个槽位都没有（单张照片）：弹回原位
+    const st = (typeof window.__selfTest === 'function') ? window.__selfTest() : null;
+    const xw = (st && st.crossings) || 0;
+    showHint('照片就钉在这儿了'
+      + (xw ? '。这个位置让 ' + xw + ' 根线交叉了，挪一点通常就能错开' : '')
+      + '。想让它回去自动排：点开这张看大图 → 「自动排位」。', 7000);
   }
   syncPopReset();
 }
@@ -1965,7 +1945,7 @@ function fitViewerImg() {
 function syncPopReset() {
   const btn = document.getElementById('popReset');
   const p = photos.find(function (q) { return q.uid === popUid; });
-  btn.hidden = !(p && p.rank != null);
+  btn.hidden = !(p && (p.pos || p.rank != null));
 }
 
 function openViewer(uid) {
@@ -2005,6 +1985,7 @@ popCity.addEventListener('change', function () {
 document.getElementById('popReset').addEventListener('click', function () {
   const p = photos.find(function (q) { return q.uid === popUid; });
   if (!p) return;
+  p.pos = null;
   p.rank = null;
   patchPhotoRec(p);
   renderPhotos();
@@ -2052,7 +2033,8 @@ function makePhoto(city) {
     city: city,
     lon: c.lon, lat: c.lat,
     cc: '中国',
-    rank: null,              // 拖过就是「绕地图一圈的第几号位」，null = 自动排
+    rank: null,              // 旧版「绕地图一圈的第几号位」，新代码不再产生
+    pos: null,               // 手动拖动后的相对位置 {fx,fy}（0–1）；null = 自动排
     locked: false
   };
 }
@@ -2193,6 +2175,7 @@ function savePhotoRec(p, file) {
       cc: p.cc || '',
       gps: !!p.gps, ts: p.ts || Date.now(),
       rank: p.rank == null ? null : p.rank,
+      pos: p.pos ? { fx: p.pos.fx, fy: p.pos.fy } : null,
     });
   }).catch(function () { return null; });
 }
@@ -2213,6 +2196,7 @@ function patchPhotoRec(p) {
         rec.lon = p.lon; rec.lat = p.lat; rec.city = p.city; rec.gps = !!p.gps;
         rec.cc = p.cc || '';
         rec.rank = p.rank == null ? null : p.rank;
+        rec.pos = p.pos ? { fx: p.pos.fx, fy: p.pos.fy } : null;
         if (p.cid) rec.cid = p.cid;
         try { st.put(rec); } catch (e) { }
       };
@@ -2256,7 +2240,8 @@ async function restoreFromDB() {
       w: r.w || 4, h: r.h || 5,
       lon: r.lon, lat: r.lat, city: r.city,
       gps: !!r.gps, locked: true, ts: r.ts || Date.now(),
-      rank: typeof r.rank === 'number' ? r.rank : null,
+      rank: null,                       // 旧版名次不再生效（拖动改成了自由坐标）
+      pos: (r.pos && typeof r.pos.fx === 'number') ? { fx: r.pos.fx, fy: r.pos.fy } : null,
     });
   }
   if (!out.length) return 0;
@@ -2438,7 +2423,8 @@ async function syncPushIndex() {
     return {
       id: p.cid, name: p._name || '', bytes: p._bytes || 0,
       w: p.w, h: p.h, lon: p.lon, lat: p.lat, city: p.city,
-      cc: p.cc || '',       ts: p.ts || Date.now(), rank: p.rank == null ? null : p.rank, t: 'image/jpeg',
+      cc: p.cc || '',       ts: p.ts || Date.now(), rank: null, t: 'image/jpeg',
+      pos: p.pos ? { fx: +p.pos.fx.toFixed(5), fy: +p.pos.fy.toFixed(5) } : null,
     };
   });
   try {
@@ -2518,7 +2504,8 @@ async function syncPull() {
       city: rec.city || locateLabel(rec.lon, rec.lat),
       cc: rec.cc || countryOf(rec.lon, rec.lat) || '',
       gps: true, locked: true, ts: rec.ts || Date.now(),
-      rank: typeof rec.rank === 'number' ? rec.rank : null,
+      rank: null,
+      pos: (rec.pos && typeof rec.pos.fx === 'number') ? { fx: rec.pos.fx, fy: rec.pos.fy } : null,
     });
   }
   if (out.length) {
@@ -3327,9 +3314,27 @@ window.__dbg = {
     const p = photos.find(function (q) { return q.uid === uid; });
     if (!p) return false;
     p.rank = (rank === null || rank === undefined) ? null : rank;
+    if (p.rank != null) p.pos = null;
     patchPhotoRec(p);
     renderPhotos();
     return true;
+  },
+  // 测试用：直接给某张照片设/清手动位置（等价于一次拖动，但不经过指针事件）
+  setPos: function (uid, fx, fy) {
+    const p = photos.find(function (q) { return q.uid === uid; });
+    if (!p) return false;
+    if (fx === null || fx === undefined) { p.pos = null; }
+    else { p.pos = { fx: fx, fy: fy }; p.rank = null; }
+    patchPhotoRec(p);
+    renderPhotos();
+    return true;
+  },
+  // 诊断：手动摆过的照片（自由摆放的验收依据）
+  freeOnes: function () {
+    return photos.filter(function (p) { return p.pos; }).map(function (p) {
+      return { uid: p.uid, city: p.city, fx: +p.pos.fx.toFixed(4), fy: +p.pos.fy.toFixed(4),
+               cx: +p._cx.toFixed(1), cy: +p._cy.toFixed(1) };
+    });
   },
   // 诊断：绕地图一圈的实际排位（拖动排序的验收依据）
   ringRot: function () { return ringRotDbg; },
@@ -3360,7 +3365,7 @@ window.__dbg = {
       return { uid: p.uid, city: p.city,
         ax: c ? +c.ax.toFixed(1) : null, ay: c ? +c.ay.toFixed(1) : null,
         pb: p._pinBoard ? [+p._pinBoard[0].toFixed(1), +p._pinBoard[1].toFixed(1)] : null,
-        pos: p.rank == null ? null : p.rank };
+        pos: p.pos ? [+p.pos.fx.toFixed(4), +p.pos.fy.toFixed(4)] : null };
     });
   },
   // 诊断「哪些红线在交叉、交叉的两条线各在哪条走廊」——排布单调性排查用
