@@ -267,3 +267,31 @@
 - Node 24 的全局 `fetch` 在进程退出时会在 libuv 里断言失败（`UV_HANDLE_CLOSING` / 0xC0000409），**退出码被改成 1**，看起来跟「核对失败」一模一样。`check_github.mjs` 改走 `curl.exe` 后退出码才正常。
 
 **实测**：`tools/check_docs.mjs` 通过；`tools/check_github.mjs` → 82/82 一致 ✅；`test/api-cloud.mjs` 打新部署 20/20；`test/cdp-live.mjs` 打自定义域 17/17；14 个 CDP 脚本全绿（stability 37/37、reorder 17/17、world 26/26、gran 16/16、sync 28/28、persist 21/21、ux 28/28、ux2 21/21、mobile 通过）。
+
+## R17 · 自由摆放（2026-10-28）
+
+**需求**（用户 m06824）：「我希望它是我拖动的话，可以随便拖动位置，而不是只能拖到你固定的位置。」
+
+| # | 做了什么 | 位置 |
+|---|---|---|
+| 1 | 拖动语义从「换槽位（记名次 `p.rank`）」改成「自由摆放（记相对坐标 `p.pos = {fx, fy}`）」 | `src/index.template.html` 拖动段 + `onPhotoUp` |
+| 2 | 去掉槽位吸附：删 `nearestRingSlot()` / `showSlotHint()` / `#slotHint` 虚线框 | 同上 + `buildPhotosLayer()` |
+| 3 | `renderPhotos()` 里把 `p.pos` 的照片从自动排布里摘出来（`autoList`），它们只按坐标画，且不占槽位 | `renderPhotos()` |
+| 4 | 位置按相对值夹进画布（`clamp(fx*BW, hw, BW-hw)`），换窗口/竖屏都不丢 | `renderPhotos()` |
+| 5 | 落位提示改写：说清「就钉在这儿」，交叉时补一句「让 N 根线交叉了，挪一点通常就能错开」 | `onPhotoUp` |
+| 6 | 「自动排位」同时清 `p.pos` 与 `p.rank`；按钮可见性判据改 `p.pos || p.rank != null` | `popReset` / `syncPopReset` |
+| 7 | 持久化补 `pos`：IndexedDB 写入 / 补丁 / 读回，云端清单推送与拉取 | `savePhotoRec` / `patchPhotoRec` / `restoreFromDB` / `syncPushIndex` / `syncPull` |
+| 8 | 服务端清单白名单放行 `cc` 与 `pos`（带 0–1 夹取），修掉「换设备接回丢国家名/丢位置」 | `functions/api/wall/[[path]].js` |
+| 9 | 调试钩子：`__dbg.setPos(uid, fx, fy)`、`__dbg.freeOnes()` | `window.__dbg` |
+| 10 | 测试整篇重写：从「落到第几个槽位」改成「落点偏差 ≤ 10 px、其他照片 1 px 内不动、刷新后仍在」 | `test/cdp-reorder.mjs` |
+| 11 | `test/api-cloud.mjs` 增加两条：手动位置与国名能过白名单再读回 | `test/api-cloud.mjs` |
+
+**踩的坑（三条）**
+- 一次性补丁脚本里用 `String.replace(regex, 字符串)` 拼代码，替换串里的 `$&` / `$` 会被当捕获组引用 → 用 `split/join` 或函数式 `replace` 更安全；这次替换串恰好没有 `$`，但 CRLF 必须按 `\r?\n` 匹配（文件是 CRLF 为主、混了 82 行 LF）。
+- `.NET` 的 `[IO.File]` API **不吃 PowerShell 的当前目录**：`cd` 之后写 `'README.md'` 仍按进程初始目录解析，报 `Could not find file 'D:\DSH\创业项目\README.md'`。必须传绝对路径（这也是"改文件一律用 edit/write 工具"的又一条理由）。
+- 改完 `src/index.template.html` 必须 `node src/build.mjs`，它才会同时写 `index.html` 与 `dist/index.html`；只改一处会让 `wrangler pages dev` 测到旧文件。
+
+**实测**
+- `test/cdp-reorder.mjs` **16/16**：落点偏差 `dx=0.0 dy=0.0`、`p.pos={fx:0.4195,fy:0.8575}`、其余 7 张位移 0、刷新后坐标逐像素相同、拖到 (1596,996) 不出界、自动排位后 `pos=null` 且零交叉。
+- 全量回归 12 个脚本 exit=0：`cdp-shot` / `cdp15` / `cdp-cross` / `cdp-reflow` / `cdp-persist` 21/21 / `cdp-ux` 28/28 / `cdp-ux2` 21/21 / `cdp-stability` 37/37 / `cdp-mobile` / `cdp-world` 26/26 / `cdp-gran` 16/16 / `cdp-exif2`。
+- 部署 `https://2e56bb59.photo-map-wall.pages.dev`；`test/api-cloud.mjs` **22/22**、`test/cdp-live.mjs` **17/17**。
