@@ -115,8 +115,9 @@ ok('非法 id 被拒 400', r.status === 400);
 r = await jpost('/pair', { code: 'ZZZZZZZZZZZZ' });
 ok('不存在的同步码 404', r.status === 404);
 
-// 10) 清理：删掉整面墙，连同步码映射也要清掉
-r = await fetch(API + '/index', { method: 'DELETE', headers: H(KEY) }); o = await r.json();
+// 10) 清理：彻底删掉整面墙（R18 起 DELETE /index 是「归档 + 清空」，
+//     真正的硬删除走 ?purge=1 —— 连历史批次和同步码映射一起清掉）
+r = await fetch(API + '/index?purge=1', { method: 'DELETE', headers: H(KEY) }); o = await r.json();
 ok('删除整面墙', r.status === 200 && o.ok === true && o.removed === 2, 'removed=' + o.removed);
 r = await jget('/index', KEY); o = await r.json();
 ok('删完后清单为空', o.exists === false);
