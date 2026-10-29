@@ -160,6 +160,32 @@ async function main() {
     t.ok('自动排位清掉手动位置', back.pos === null, JSON.stringify(back.pos));
     t.ok('自动排位后零交叉', back.t.issues.length === 0 && back.t.crossings === 0,
       'issues=' + back.t.issues.length + ' crossings=' + back.t.crossings);
+
+    // 「适应全部」= 视野回全部 + 照片回到自动排版（用户 2026-10-28 反馈：只动镜头像没生效）
+    await t.evaluate(`__dbg.setPos(${uid0}, 0.32, 0.78)`);
+    await t.sleep(400);
+    const manual = await t.evaluate(`__dbg.photos().find(p => p.uid === ${uid0}).pos`);
+    t.ok('摆到指定位置后记下了坐标', !!manual && Math.abs(manual.fx - 0.32) < 0.02, JSON.stringify(manual));
+
+    await t.evaluate(`document.getElementById('btnFit').click()`);
+    await t.sleep(1100);
+    const afterFit = await t.evaluate(`({
+      pos: __dbg.photos().map(p => p.pos).filter(Boolean).length,
+      n: __dbg.photos().length,
+      hint: document.getElementById('hint').textContent,
+      t: __selfTest()
+    })`);
+    t.ok('「适应全部」清掉了手动位置', afterFit.pos === 0, 'remaining=' + afterFit.pos);
+    t.ok('「适应全部」后张数不变', afterFit.n === 8, String(afterFit.n));
+    t.ok('「适应全部」后自动排版零交叉', afterFit.t.issues.length === 0 && afterFit.t.crossings === 0,
+      'issues=' + afterFit.t.issues.length + ' crossings=' + afterFit.t.crossings);
+    t.ok('提示里说了可撤销', afterFit.hint.indexOf('撤销') >= 0, afterFit.hint);
+
+    // 撤销要能把用户手摆的位置找回来
+    await t.evaluate(`document.getElementById('hint').click()`);
+    await t.sleep(700);
+    const undone = await t.evaluate(`__dbg.photos().find(p => p.uid === ${uid0}).pos`);
+    t.ok('撤销后位置回来了', !!undone && Math.abs(undone.fx - 0.32) < 0.02, JSON.stringify(undone));
     await t.evaluate(`document.getElementById('viewerClose').click()`);
   } catch (e) {
     fatal = e;
