@@ -65,6 +65,31 @@ async function cities() {
   return JSON.parse(await t.evaluate(
     'JSON.stringify(window.__dbg.photos().map(function(p){return p.city;}))'));
 }
+// 轮询本机身份直到变成 want（或超时）—— 不用固定 sleep 赌时序。
+// 坑：Page.navigate 刚发出时，Runtime.evaluate 命中的还是**旧文档**，旧文档里的 wallKey
+// 仍是老 key，所以「只要 key 变了就返回」会假阳性。只认 performance.timeOrigin 变过之后的采样。
+// 返回 { key, ms, newDoc, seen }；seen 是 key 的变化序列，失败时能看出卡在哪一步。
+async function waitAdopt(want, oldOrigin, ms) {
+  const t0 = Date.now();
+  let key = null;
+  let newDoc = false;
+  const seen = [];
+  for (;;) {
+    let s = null;
+    try {
+      s = JSON.parse(await t.evaluate(
+        "JSON.stringify({o:String(performance.timeOrigin),"
+        + "k:(window.__dbg&&window.__dbg.wallKey)?window.__dbg.wallKey():null})"));
+    } catch (e) { s = null; }              // 导航中途可能没有可求值的上下文
+    if (s && s.o !== oldOrigin) {
+      newDoc = true;
+      if (s.k !== key) { key = s.k; seen.push((Date.now() - t0) + 'ms:' + String(key).slice(0, 8)); }
+      if (key === want) return { key: key, ms: Date.now() - t0, newDoc: newDoc, seen: seen };
+    }
+    if (Date.now() - t0 > ms) return { key: key, ms: Date.now() - t0, newDoc: newDoc, seen: seen };
+    await sleep(120);
+  }
+}
 
 (async () => {
   if (!(await startDev())) {
@@ -99,7 +124,37 @@ async function cities() {
   t.ok('服务端清单 3 条', (raw.photos || []).length === 3, JSON.stringify(raw.photos && raw.photos.length));
   t.ok('服务端存的是压过的中等尺寸版本（长边≤1600、≤1.5MB）', (raw.photos || []).every((p) => p.bytes > 0 && p.bytes <= 1.5 * 1024 * 1024 && p.t === 'image/jpeg'), JSON.stringify(raw.photos));
 
+  // ---- 设备 cookie 认领：清掉 localStorage 与 pmw_key（模拟 Safari 七天清理），
+  //      但服务端下发的 HttpOnly pmw_dev 还在 → 应该自动认回同一面墙，而不是变成新设备
+  // 注意：这里绝不能清 cookie（pmw_dev 是 HttpOnly 的，脚本本来也删不掉，
+  //       但 Network.clearBrowserCookies 能删 —— 一清就没有「认领」可测了）。
+  await t.evaluate("localStorage.removeItem('pmw.wallKey');document.cookie='pmw_key=; path=/; max-age=0';'ok'");
+  const oldOrigin = await t.evaluate('String(performance.timeOrigin)');
+  await t.goto(URL_);
+  // 认领链路是异步的（文档启动 → restoreFromDB → whoami → setWallKey），等 key 变成目标值
+  // 而不是猜时间：文档启动 + IndexedDB 复原在机器忙的时候能到好几秒。
+  const wAdopt = await waitAdopt(i1.key, oldOrigin, 12000);
+  const iAdopt = await info();
+  let adoptNote = iAdopt.key + ' vs ' + i1.key + '（新文档=' + wAdopt.newDoc
+    + '，等 ' + wAdopt.ms + 'ms，变化=' + (wAdopt.seen.join('→') || '无') + '）';
+  if (iAdopt.key !== i1.key) {
+    // 失败时把「服务端那份 cookie 还在不在 / whoami 怎么答」一并打出来，
+    // 用来区分「认领只是没等到」和「设备 cookie 真的没了」。
+    try {
+      await t.send('Network.enable', {});
+      const cks = await t.send('Network.getAllCookies', {});
+      adoptNote += ' pmw=' + ((cks.result.cookies || []).filter((c) => /^pmw/.test(c.name))
+        .map((c) => c.name + '=' + String(c.value).slice(0, 8)).join(',') || '(无)');
+      adoptNote += ' whoami=' + await t.evaluate("fetch('/api/wall/whoami').then(r=>r.text())");
+    } catch (e) { adoptNote += ' 诊断失败:' + e.message; }
+  }
+  t.ok('存储被清后认回了设备 cookie 的 key', iAdopt.key === i1.key, adoptNote);
+  const sAdopt = await st('认回后');
+  t.ok('认回后照片还在（不用输同步码）', sAdopt.photos === 3, 'photos=' + sAdopt.photos);
+
   // ---- 模拟「换一台设备」：清身份 + 清本地库 ----
+  // 真·换设备：连服务端下发过的 HttpOnly pmw_dev 一起清掉（否则会被认回来）
+  try { await t.send('Network.enable', {}); await t.send('Network.clearBrowserCookies', {}); } catch (e) {}
   await t.evaluate("localStorage.removeItem('pmw.wallKey');document.cookie='pmw_key=; path=/; max-age=0';'ok'");
   await t.evaluate("new Promise(function(res){var r=indexedDB.deleteDatabase('photo-map-wall');r.onsuccess=function(){res(1);};r.onerror=function(){res(0);};r.onblocked=function(){res(0);};})");
   await t.goto(URL_);
