@@ -1,0 +1,13 @@
+{
+  "routes": [
+    {
+      "routePath": "/api/wall/:path*",
+      "mountPath": "/api/wall",
+      "method": "",
+      "module": [
+        "api/wall/[[path]].js:onRequest"
+      ]
+    }
+  ],
+  "baseURL": "/"
+}
