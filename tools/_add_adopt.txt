@@ -1,0 +1,10 @@
+  // ---- 设备 cookie 认领：清掉 localStorage 与 pmw_key（模拟 Safari 七天清理），
+  //      但服务端下发的 HttpOnly pmw_dev 还在 → 应该自动认回同一面墙，而不是变成新设备
+  await t.evaluate("localStorage.removeItem('pmw.wallKey');document.cookie='pmw_key=; path=/; max-age=0';'ok'");
+  await t.goto(URL_);
+  await sleep(2200);
+  const iAdopt = await info();
+  t.ok('存储被清后认回了设备 cookie 的 key', iAdopt.key === i1.key, iAdopt.key + ' vs ' + i1.key);
+  const sAdopt = await st('认回后');
+  t.ok('认回后照片还在（不用输同步码）', sAdopt.photos === 3, 'photos=' + sAdopt.photos);
+
