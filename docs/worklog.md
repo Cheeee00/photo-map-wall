@@ -307,3 +307,88 @@
 | 6 |  + "	est/cdp-reorder.mjs" +  增加 6 项：摆到 (0.32,0.78) → 点「适应全部」→ 手动位置清零 / 张数不变 / 零交叉 / 提示可撤销 / 点提示后位置回来 |
 
 **踩坑**：用 node 脚本打补丁时，把中文断言文本写进**单引号 JS 字符串**里，遇到中文引号与嵌套引号直接  + "SyntaxError: Unexpected identifier" + ；改成把待插入片段放在  + ".txt" +  里读进来（不经过 JS 字面量）就干净了。另外  + "[IO.File]::ReadAllLines('src\\...')" +  的相对路径按**进程 CWD** 解析而不是 PowerShell 的  + "cd" + ，必须给绝对路径。
+
+## R18 · 清空即归档（using / history，2026-10-29）
+
+**需求**（用户原话）：「如果用户点击了这个清空数据，那我们就在前端给他清空，他的识别码肯定是保持一致的。历史图片转到这个识别码的 archive 文件夹下，数据有两个文件夹 using 和 history，history 下面是【识别码】_01、【识别码】_02，如果这个人清除多次，理解吗」
+
+| # | 做了什么 | 位置 |
+|---|---|---|
+| 1 | 文件头注释改成一张 KV 映射表：**using** = `idx:<key>` + `blb:<key>:<id>`（一个字都没改，老数据照旧读得到），**history** = `arc:<key>:<NN>`（那一批的清单快照）+ `abl:<key>:<NN>:<id>`（图片字节），`NN` 两位零填充 `01`–`99`，并写明 `cod:<code>` 的生命期（清空时留着，`purge` 时才删） | `functions/api/wall/[[path]].js` 文件头 |
+| 2 | 新增历史工具：`ARC_MAX=99`、`NN_RE=/^[0-9]{2}$/`、`pad2()`、`listKeys()`（KV 单页 1000 条，自动翻页）、`delPrefix()`、`arcSlots()`、`arcBlobIds()` | 同上「历史批次工具」段 |
+| 3 | `DELETE /index` 改成**归档 + 清空**：取下一个 NN = 现存最大 + 1 → 逐张 `blb:` 复制成 `abl:<key>:<NN>:<id>`（metadata 的 `n`/`t` 一起搬）→ 写 `arc:` 快照 → 删 `blb:` → 把 `idx:` 重写成 `{v:1, code, photos:[], updated}`（**这一步是关键**：同步码存在清单里，清单整条删了下次写清单就会另发一个新码）→ 返回 `{ok, archived:'NN', removed, archivedPhotos}` + `Set-Cookie: pmw_dev` | 同上 |
+| 4 | 当前墙本来就空 → 返回 `archived:null`，且顺手清掉没清单对应的残留 `blb:` 字节（不建空历史，否则面板里会堆一串「0 张」的批次） | 同上 |
+| 5 | `NN` 超过 99 → **409 `ARCHIVE_FULL`**，注释里写明选择理由：循环覆盖最旧批次 = 静默销毁用户以为还留着的东西，而且是唯一无法撤回的操作；腾地方有「删某一批」「彻底删除」两条明路 | 同上 |
+| 6 | `DELETE /index?purge=1`（也接受 `true`）= 真删除：`blb:` + `arc:` + `abl:` + `cod:` + `idx:` 全清，返回 `{ok, purged:true, removed, archivedBatches, archivedBlobs}` | 同上 |
+| 7 | `GET /history`：`{ok:true, items:[{n, photos, updated, blobs}]}`，按 `n` 升序；只读 `arc:` 清单，**绝不读 `abl:` 字节** | 同上 |
+| 8 | `DELETE /history?n=01`：先删这一批的 `abl:` 字节，再删 `arc:` 快照；`n` 非两位数字 → 400 `BAD_BATCH`，批次不存在 → 404 `NO_SUCH_BATCH`，成功 → `{ok, n, removed}` | 同上 |
+| 9 | 前端：`syncWipe()` 语义不变（只打 `DELETE /index`，现在服务端就是归档）；新增 `syncHistory()` / `syncHistDel(n)` / `syncPurge()` / `clearLocalPhotos()` / `fmtHistWhen()` / `renderHist()` | `src/index.template.html` 同步段 |
+| 10 | 同步面板：「删掉这面墙的云端副本」→「清空这面墙（照片存进历史）」；新增「看看历史（N 批）」展开区，逐批显示「第 01 批　7 张　10月29日 23:55」，每批带「删掉这批」（带 confirm）；底部「彻底删除这面墙的全部数据（含历史）」= **两次 confirm** | 同上面板 HTML + CSS |
+| 11 | `btnWipe` 流程：confirm（说清「照片不删、存进历史、同步码不变」）→ `syncWipe()` → **成功之后才清本机**（`clearLocalPhotos()`：`photos=[]` + `clearRecs()` + 重绘）→ 提示「已清空，原来的 N 张存进历史第 01 批（同步码不变）」。**不再清 `syncCode`**（旧实现清空后把码置空，正好和需求相反） | 同上 `bindSyncUI()` |
+| 12 | 调试钩子：`__dbg.syncHistory / syncHistDel / syncPurge / renderHist / clearLocalPhotos` | `window.__dbg` |
+| 13 | 新测试 `test/api-archive.mjs`（39 条断言）：空墙 `archived:null` → 传 2 张 → 清空 `01` → 清单空 / 历史 `01` 有 2 张 2 个字节 → 同步码不变 + `pair` 回同一把 key → 再传 1 张 → 清空 `02` → 历史 `01,02` 升序 → `history` 不含 base64 → 邻居 key 全程不动 → 参数校验 → 删 `01` → `purge=1` 清空历史且同步码失效 | `test/api-archive.mjs` |
+| 14 | `test/api-cloud.mjs` 清理段改成 `DELETE /index?purge=1`（否则「删完后清单为空 / 同步码失效」在新语义下必然失败） | `test/api-cloud.mjs` |
+
+**踩的坑（六条）**
+- **`Start-Process -RedirectStandardOutput` 在 PS 5.1 上直接抛异常**：环境里同时有 `NO_PROXY` 和 `no_proxy` 两个键，Start-Process 重建进程环境时报 `Item has already been added`，wrangler 根本没起来，而我的「等 ping」循环白等 120 秒才被挪进后台。改用 `cmd /c "start /b npx.cmd ... > log 2> err"` 起服务就好。
+- **`test/api-cloud.mjs` 默认打线上**（`https://wall.orange0323.dpdns.org`）。改完后端第一次跑它还 22/22 全绿，差点误判成「新语义没生效／不需要改」—— 其实它测的是线上旧函数。本地验证必须显式传 URL：`node test/api-cloud.mjs http://127.0.0.1:8792`。
+- **`GET /index` 返回的 `code` 不带连字符**（12 位原文），而 `POST /index`、`/pair`、`/whoami` 返回 `XXXX-XXXX-XXXX`。归档后「同步码不变」的断言直接字符串比较就假失败（第一次跑 38/39）。这是历史遗留的不一致，前端不用 GET 的 `code`（它用 pair/POST 的格式化码），本次**没去动它**，测试里统一 `replace(/[^A-Z0-9]/g,'')` 再比。
+- **4 字节的假 JPEG 被 `PUT /blob` 拒了 415**（服务端有 `byteLength < 12` 的兜底），于是探测脚本里出现「`removed:0` / `blobs:0`」这种看着像「归档没搬字节」的假象。换成 ≥12 字节、带 SOI/EOI 的样本一切正常 —— 排查时先确认「上传这一步真的成功了」，别先怀疑归档。
+- **改共享语义要连带改它的调用方**：`DELETE /index` 从「真删」变成「归档」，`test/api-cloud.mjs` 的清理段就必然失败。这个文件不在禁改名单里，改成 `?purge=1`（线上旧版会忽略未知参数、仍按真删处理，所以同一个脚本两边都能绿）。
+- **`test/cdp-sync.mjs` 的 `__dbg.syncWipe()` 只能保持「只动云端」**：它断言「删整墙后云端清单为空」且「本机照片还在（`photos===2`）」。所以「清空本机照片」只能放在按钮流程里（`btnWipe` → `clearLocalPhotos()`），绝不能让 `syncWipe()` 自己去清本机，否则会打挂一个不许改的测试。
+
+**实测**
+- `node test/api-archive.mjs`（本地 `wrangler pages dev dist --port 8792`）**39/39 通过**，461 ms。关键读数：`{"ok":true,"archived":"01","removed":2,"archivedPhotos":2}`、`history` → `[{"n":"01","photos":2,"updated":"...","blobs":2},{"n":"02","photos":1,...}]`、`purge` → `{"purged":true,"archivedBatches":1,"archivedBlobs":1}`、同步码 `YNGE-62UN-MQVQ` 两次清空前后一致、`pair` 仍返回同一把 key。
+- `node test/api-cloud.mjs http://127.0.0.1:8792` **22/22**（清理段走 `?purge=1`）。
+- `node src/build.mjs` → `index.html` 1,227,389 B；把内联 `<script>` 抽出来 `node --check` 通过（1 个 script，1142.4 KB）。
+- `node tools/check_docs.mjs` → 文档体检通过。
+
+## R18 补充 · 2026-10-30：清空即归档的浏览器级冒烟 + cdp-sync 根因
+
+| # | 动作 | 结果 |
+|---|---|---|
+| 1 | 补 `test/cdp-history.mjs`（29 项） | **ALL PASS 29 项**：真点 `#btnSync`→`#btnWipe`→`#btnHist`→「删掉这批」→`#btnPurge`，全程零页面异常 |
+| 2 | 独立复跑 B 的后端契约 | `api-archive.mjs` 39/39（512 ms）、`api-cloud.mjs` 本地 22/22 |
+| 3 | 独立复跑 A 的三件套 | `cdp-sync` 32/32、`cdp-progress` 11/11、`cdp-ux2` 21/21 |
+| 4 | 全量回归 15 个 CDP 套件 | 全绿（cdp-shot / cdp15 / cdp-cross 40 张 / cdp-reflow 六档 / cdp-ux 28 / cdp-ux2 21 / cdp-persist 21 / cdp-stability 37 / cdp-mobile / cdp-world 26 / cdp-gran 16 / cdp-exif2 9 / cdp-reorder 22 / cdp-sync 32 / cdp-history 29） |
+| 5 | 清掉 3 个遗留探针脚本 | `_dbg_devcookie.mjs`、`_probe-nav.mjs`、`_probe-device.mjs`（都在 test/ 下，这里不写全路径，它们已不存在） |
+
+**我自己改的一处（我的测试断言写错了，不是产品错）**：`cdp-history` 原本断言「彻底删除后用同一把 key 查清单应返回 401」，实测 200 空清单 ——
+key 只是一串随机十六进制，服务端没有「已注册的 key 名单」，401 只在**没带 key / 格式非法**时出现。
+真正确保「回不来」的是 `cod:` 映射被删（`/pair` 返回 404）+ 原图 404，已把断言改成这三个可判据信号。
+
+**cdp-sync 那个 FAIL 的根因（A 子代理查出来的，我认可）**：断言用固定墙钟赌异步链（navigate 2400ms + sleep 2200ms = 4600ms），
+而「文档启动 → restoreFromDB（读 IndexedDB + 最多 40 张 blob 转 dataURL）→ /whoami → setWallKey」这条链在冷启动要 2.8 s，8× CPU 节流 1.37 s，
+余量只剩 1.8 s，机器一忙就取到刚 mint 的新 key。改成轮询 `__dbg.syncInfo()` 并只认 `performance.timeOrigin` 变过之后的采样（避开旧 document 假阳性）。
+
+**顺着这条线索暴露的两个真隐患（还没修，已挂 TODO）**：
+1. `boot()` 把认领串在复原后面，复原一慢/抛错，认领就永远轮不到 —— 应把 `/whoami` 与复原**并行**发起。
+2. `initWallKey()` 一 mint 就把新 key 落盘（localStorage + 365 天 cookie），而 `adoptTried` 每个文档只试一次且失败静默 —— 认领失败会长期粘住，下次启动也不重试。
+
+## 子代理模型分工（2026-10-29 用户定）
+
+- **审核方案** → `kimi-k3.1-pro` / `glm-5.3`
+- **执行** → `cn:deepseek-v4.1-flash`
+- `subagent` 工具没有 model 参数，必须走 `workflow` 的 `agent(prompt, {provider, model})`。
+- 模型 id 写错不会报错，只会让 `agent()` 返回 `null`（表现为「子代理全部秒死」）。已确认无效的猜测：`deepseek-1017` / `deepseek-v3.2-1017` / `deepseek-v3.2` / `deepseek-chat`；月卡真实 id 形如 `zzzxin-monthly` + `deepseek-v4.1-flash-1017`。
+- 多子代理并行改同一仓库时，prompt 里必须划清文件 ownership（例：A 只准改 `test/cdp-sync.mjs`，禁碰 `functions/**`），否则互相覆盖、验收无法归因。
+## R18 热修 · 2026-10-30：线上归档在真实 KV 上失效（list() 最终一致）
+
+| # | 动作 | 结果 |
+|---|---|---|
+| 1 | 本地 39/39 全绿，线上 `api-archive` 28/39 失败 | 复现差距，确定不是测试用例问题 |
+| 2 | 定位根因：`KV.list()` 最终一致 | 刚 `put` 的 key 几十秒内列不出来 |
+| 3 | 加两张登记表 `blx:<key>` / `arx:<key>` | 「刚写完马上要读」的目录一律自己记账 |
+| 4 | 归档记 `ids`、批号从登记表取 | 第二次清空不再覆盖上一批 |
+| 5 | 修 `pad2("01")` → `"001"` | 隐式转换陷阱：`"01" < 10` 为 true |
+| 6 | `彻底删除` 也从登记表取批号 | 不再「报成功但历史还躺着」 |
+| 7 | 本地 39/39 + 22/22 → 部署 → 线上 39/39 | ✅ |
+| 8 | 浏览器级复核：`cdp-history` 29/29、`cdp-live` 17/17、`cdp-sync` 32/32 | ✅ |
+
+**根因只一句**：`KV` 的 `list()` 是**最终一致**的，本地 miniflare 却是强一致的 —— 所以 39 条契约在本地全绿，
+一上真实 KV 就废。凡是「刚写完马上要读」的目录（历史批号、当前这面墙的图片 id）都不能靠 `list()`，
+必须自己记一份账；`list()` 只留作老数据的兜底，取并集。
+
+**顺带修的隐式转换坑**：`pad2` 原写 `(n) => (n < 10 ? '0' + n : String(n))`，
+`arcSlots` 改成返回**字符串**数组后，`"01" < 10` 为真（JS 把 `"01"` 转成数字 1），于是 01 被补成 `001`。
+改成 `const n = Number(v) || 0;` 先转数字再比。
