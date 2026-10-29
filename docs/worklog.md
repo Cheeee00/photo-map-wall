@@ -295,3 +295,15 @@
 - `test/cdp-reorder.mjs` **16/16**：落点偏差 `dx=0.0 dy=0.0`、`p.pos={fx:0.4195,fy:0.8575}`、其余 7 张位移 0、刷新后坐标逐像素相同、拖到 (1596,996) 不出界、自动排位后 `pos=null` 且零交叉。
 - 全量回归 12 个脚本 exit=0：`cdp-shot` / `cdp15` / `cdp-cross` / `cdp-reflow` / `cdp-persist` 21/21 / `cdp-ux` 28/28 / `cdp-ux2` 21/21 / `cdp-stability` 37/37 / `cdp-mobile` / `cdp-world` 26/26 / `cdp-gran` 16/16 / `cdp-exif2`。
 - 部署 `https://2e56bb59.photo-map-wall.pages.dev`；`test/api-cloud.mjs` **22/22**、`test/cdp-live.mjs` **17/17**。
+## R17 补充 · 2026-10-28 · 「适应全部」= 视野 + 自动排版
+
+| 步骤 | 做了什么 |
+|---|---|
+| 1 | 用户反馈：「适应全部好像没有自动排版呀」。原实现只调  + "esetView(true)" + （镜头适应），手摆过的照片还在原地 —— 按钮看起来没生效 |
+| 2 | 新增  + "utoLayoutAll()" + ：清掉所有  + "p.pos/p.rank" +  →  + "patchPhotoRec" +  →  + "enderPhotos()" +  →  + "esetView(true)" +  → 延时同步云端 |
+| 3 | 摆回之前把原位置存进  + "stash" + ，提示「已按自动排位摆回 N 张。点我撤销」，点提示即恢复（ + "hintUndo" + ） |
+| 4 | 没有手摆过照片时行为完全不变（直接  + "esetView" + ），不做多余的写库 |
+| 5 | 按钮  + "	itle" +  改为「回到自动排版，并把视野放到全部照片」 |
+| 6 |  + "	est/cdp-reorder.mjs" +  增加 6 项：摆到 (0.32,0.78) → 点「适应全部」→ 手动位置清零 / 张数不变 / 零交叉 / 提示可撤销 / 点提示后位置回来 |
+
+**踩坑**：用 node 脚本打补丁时，把中文断言文本写进**单引号 JS 字符串**里，遇到中文引号与嵌套引号直接  + "SyntaxError: Unexpected identifier" + ；改成把待插入片段放在  + ".txt" +  里读进来（不经过 JS 字面量）就干净了。另外  + "[IO.File]::ReadAllLines('src\\...')" +  的相对路径按**进程 CWD** 解析而不是 PowerShell 的  + "cd" + ，必须给绝对路径。
