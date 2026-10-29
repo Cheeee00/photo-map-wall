@@ -315,7 +315,7 @@
     <button class="btn primary" id="btnAdd">
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">加照片</span>
     </button>
-    <button class="btn" id="btnFit" title="适应全部">
+    <button class="btn" id="btnFit" title="回到自动排版，并把视野放到全部照片">
       <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5"/></svg><span class="lbl">适应全部</span>
     </button>
     <button class="btn" id="btnExport" title="导出 PNG">
@@ -1623,6 +1623,32 @@ function resetView(animated) {
   else fitToPins(animated);
 }
 
+
+/* 「适应全部」不是只动镜头，也把照片放回自动排布。
+   理由：手动摆过之后（p.pos）再点「适应全部」，用户期待的是「回到整整齐齐那面墙」，
+   而只把镜头拉远、照片还散在他自己拖的位置上，看起来就像按钮没生效。
+   摆回去之前记住原位置，提示里可以撤销。 */
+function autoLayoutAll() {
+  const moved = photos.filter(function (p) { return p.pos || p.rank != null; });
+  if (!moved.length) { resetView(true); return 0; }
+  const stash = moved.map(function (p) {
+    return { p: p, pos: p.pos ? { fx: p.pos.fx, fy: p.pos.fy } : null, rank: p.rank };
+  });
+  moved.forEach(function (p) { p.pos = null; p.rank = null; patchPhotoRec(p); });
+  renderPhotos();
+  resetView(true);
+  syncScheduleIndex(1200);
+  showHint('已按自动排位摆回 ' + moved.length + ' 张。点我撤销', 7000);
+  hintEl.classList.add('undo');
+  hintUndo = function () {
+    stash.forEach(function (s2) { s2.p.pos = s2.pos; s2.p.rank = s2.rank; patchPhotoRec(s2.p); });
+    hintEl.classList.remove('undo');
+    hintUndo = null;
+    renderPhotos(); syncScheduleIndex(600);
+    showHint('已恢复你摆的位置。');
+  };
+  return moved.length;
+}
 function setView(target, animated) {  const s = clamp(target.s, baseView.s * 0.8, baseView.s * 11);
   const t = { s: s, tx: target.tx, ty: target.ty };
   if (!animated) {
@@ -3018,7 +3044,7 @@ fileInput.addEventListener('change', function () {
 });
 btnFit.addEventListener('click', function () {
   btnFit.classList.remove('hasnew');
-  resetView(true);
+  autoLayoutAll();
 });
 /* 「看示例」= 借看一下，不是清空。
    旧行为是一键 clearRecs() 把本地照片全删了，而按钮长得完全无害 ——
