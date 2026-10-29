@@ -158,6 +158,30 @@
              text-underline-offset:3px;}
   #hint.undo:hover{color:#FFD9A8;}
 
+  /* ---------- 上传进度条 ----------
+     一次加十几张时，照片要逐张读文件 + 解尺寸 + 读 EXIF，能有好几秒。
+     只有一行「正在读取 3 / 12」看不出还剩多久，加一条细进度条。 */
+  #prog{
+    position:fixed;left:50%;bottom:104px;transform:translateX(-50%);
+    width:min(280px,64vw);z-index:20;pointer-events:none;
+    opacity:0;transition:opacity .25s;
+  }
+  #prog.on{opacity:1;}
+  #prog b{
+    display:block;text-align:center;font-size:11.5px;font-weight:400;letter-spacing:.5px;
+    color:rgba(232,220,203,.72);margin-bottom:5px;
+  }
+  #prog .bar{
+    height:4px;border-radius:3px;overflow:hidden;background:rgba(255,255,255,.13);
+    box-shadow:0 1px 2px rgba(0,0,0,.35) inset;
+  }
+  #prog .bar > i{
+    display:block;height:100%;width:0;border-radius:3px;
+    background:linear-gradient(90deg,#C6A65C,#E9CE87);
+    transition:width .18s ease-out;
+  }
+  @media (max-width:560px){ #prog{bottom:calc(122px + env(safe-area-inset-bottom,0px));} }
+
   /* ---------- 照片大图预览 ---------- */
   #viewer{
     position:fixed;inset:0;z-index:50;display:none;
@@ -283,6 +307,17 @@
     font-size:11.5px;padding:8px;
   }
   #syncPanel .danger:hover{background:rgba(192,57,43,.26);}
+  /* 历史批次（清空时整批存下来的照片）：默认收着，点「看看历史」才展开 */
+  #syncPanel .hist-toggle{margin-top:8px;width:100%;text-align:center;}
+  #histBox{display:none;margin-top:8px;border-top:1px solid rgba(214,190,160,.12);padding-top:9px;}
+  #histBox.on{display:block;}
+  #histBox .hist-head{color:rgba(232,220,203,.55);font-size:11.5px;margin-bottom:6px;}
+  #histList{max-height:154px;overflow:auto;margin-bottom:8px;}
+  #histList .hist-empty{color:rgba(232,220,203,.45);font-size:11.5px;padding:6px 0;line-height:1.5;}
+  #histBox .hist-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 0;}
+  #histBox .hist-item b{font-weight:600;font-size:12px;color:#F3E4CB;}
+  #histBox .hist-item .hm{color:rgba(232,220,203,.42);font-size:11px;margin-left:6px;}
+  #histBox .hist-item .act{padding:4px 9px;font-size:11px;}
   @media (max-width:560px){
     #syncPanel{left:8px;right:8px;width:auto;bottom:calc(var(--uih) + 10px);}
   }
@@ -300,6 +335,7 @@
 </div>
 
 <div id="hint">拖照片进来 · 或点「加照片」 · 拖动地图上的大头针可改位置</div>
+  <div id="prog"><b></b><div class="bar"><i></i></div></div>
 
 <div id="ui">
   <div class="row">
@@ -341,7 +377,13 @@
     <button class="act" id="btnJoin">接入</button>
   </div>
   <div id="syncStat">正在检查云端…</div>
-  <button class="act danger" id="btnWipe">删掉这面墙的云端副本</button>
+  <button class="act danger" id="btnWipe">清空这面墙（照片存进历史）</button>
+  <button class="act hist-toggle" id="btnHist">看看历史（<span id="histCount">0</span> 批）</button>
+  <div id="histBox">
+    <div class="hist-head">每次清空，那一批照片都整批存在这里，随时能翻出来看。</div>
+    <div id="histList"><div class="hist-empty">点上面的「看看历史」展开</div></div>
+    <button class="act danger" id="btnPurge">彻底删除这面墙的全部数据（含历史）</button>
+  </div>
 </div>
 
 <div id="zoomer">
@@ -2330,7 +2372,8 @@ function initWallKey() {
   let k = '';
   try { k = localStorage.getItem(WALL_KEY_LS) || ''; } catch (e) { k = ''; }
   if (!/^[a-f0-9]{32}$/.test(k)) k = readCookie(WALL_KEY_CK);
-  if (!/^[a-f0-9]{32}$/.test(k)) k = newCid() + newCid();
+  initWallKey.minted = !/^[a-f0-9]{32}$/.test(k);
+  if (initWallKey.minted) k = newCid() + newCid();
   wallKey = k;
   try { localStorage.setItem(WALL_KEY_LS, k); } catch (e) { /* 忽略 */ }
   writeCookie(WALL_KEY_CK, k, 365);
@@ -2343,6 +2386,32 @@ function setWallKey(k) {
   try { localStorage.setItem(WALL_KEY_LS, k); } catch (e) { /* 忽略 */ }
   writeCookie(WALL_KEY_CK, k, 365);
   return true;
+}
+
+/* 本机没有身份时（清过站点数据、换过浏览器内核），向服务端问一句「这台设备之前是谁」。
+   服务端在写清单/传图时下发过 HttpOnly 的 pmw_dev cookie，它不受 Safari ITP
+   七天清理脚本可写存储的约束，所以手机放久了回来还能接上同一面墙。 */
+let adoptTried = false;
+async function syncAdoptServerKey() {
+  if (adoptTried) return false;
+  adoptTried = true;
+  if (!syncAllowed() || !initWallKey.minted) return false;
+  try {
+    const r = await syncCall('/whoami', {}, 6000);
+    if (!r || !r.ok) return false;
+    const o = await r.json();
+    if (o && o.ok && /^[a-f0-9]{32}$/.test(o.key || '') && o.key !== wallKey) {
+      setWallKey(o.key);
+      if (o.code) syncCode = o.code;
+      renderSyncCode();
+      markSync('ok');
+      // 接回来的身份上是空的：把本机已有的照片补上去，别让它们只留在这一端
+      const mine = photos.filter(function (p) { return !p.demo; });
+      if (mine.length) syncQueuePhotos(mine);
+      return true;
+    }
+  } catch (e) { /* 静默：拿不到就继续用新身份 */ }
+  return false;
 }
 
 /* file:// 与 http 页面之外的场景没有同源后端，直接降级 */
@@ -2562,6 +2631,119 @@ async function syncWipe() {
   } catch (e) { return { ok: false }; }
 }
 
+/* -------------------------------------------------- 历史 / 彻底删除 ---
+   用户在需求里的原话：「点击清空数据，前端给他清空，识别码保持一致。历史图片
+   转到这个识别码的 archive 下，数据有两个文件夹 using 和 history，history 下面
+   是【识别码】_01、【识别码】_02」。
+   落到 KV 上（没有真文件夹，用前缀表示分区）：
+     using   = idx:<key> + blb:<key>:<id>          ← 现在这面墙
+     history = arc:<key>:<NN> + abl:<key>:<NN>:<id> ← 第 NN 批历史（01、02…99）
+   清空 = 后端把 using 整批搬到下一个 NN，前端只把眼前看到的照片清掉。
+   **识别码（同步码 / wallKey）全程不变** —— 这是需求的硬约束。 */
+async function syncHistory() {
+  if (!syncAllowed()) return { ok: false, items: [] };
+  try {
+    const r = await syncCall('/history', {}, 12000);
+    if (!r.ok) return { ok: false, items: [] };
+    const o = await r.json();
+    return { ok: true, items: (o && o.items) || [] };
+  } catch (e) { return { ok: false, items: [] }; }
+}
+
+async function syncHistDel(n) {
+  if (!syncAllowed() || !/^[0-9]{2}$/.test(n || '')) return { ok: false };
+  try {
+    const r = await syncCall('/history?n=' + encodeURIComponent(n), { method: 'DELETE' }, 15000);
+    if (!r.ok) return { ok: false };
+    return await r.json();
+  } catch (e) { return { ok: false }; }
+}
+
+/* 彻底删：连历史一起清，同步码随之失效（隐私出口，别丢） */
+async function syncPurge() {
+  if (!syncAllowed()) return { ok: false };
+  try {
+    const r = await syncCall('/index?purge=1', { method: 'DELETE' }, 20000);
+    if (!r.ok) return { ok: false };
+    return await r.json();
+  } catch (e) { return { ok: false }; }
+}
+
+/* 只清本机：照片从画布和 IndexedDB 里消失，**设备身份（wallKey / cookie）一点不动** */
+async function clearLocalPhotos() {
+  const n = photos.filter(function (p) { return !p.demo; }).length;
+  photos = [];
+  try { await clearRecs(); } catch (e) { /* 存储不可用也别拦着清空 */ }
+  renderPhotos();
+  resetView(true);
+  syncGranState();
+  return n;
+}
+
+function fmtHistWhen(iso) {
+  const d = iso ? new Date(iso) : null;
+  if (!d || isNaN(d.getTime())) return '';
+  const p2 = function (v) { return String(v).padStart(2, '0'); };
+  return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+}
+
+/* 把历史批次画进面板：一行一批，格式「第 01 批　7 张」。最新的排在最上面，
+   免得批次多了要往下翻。每批带一个删除按钮（删的是这一批，当前墙不受影响）。 */
+async function renderHist() {
+  const list = document.getElementById('histList');
+  const cnt = document.getElementById('histCount');
+  if (!list) return 0;
+  list.innerHTML = '<div class="hist-empty">正在数历史…</div>';
+  const r = await syncHistory();
+  if (!r.ok) {
+    if (cnt) cnt.textContent = '?';
+    list.innerHTML = '<div class="hist-empty">连不上云端，过会儿再点一次。</div>';
+    return 0;
+  }
+  if (cnt) cnt.textContent = String(r.items.length);
+  if (!r.items.length) {
+    list.innerHTML = '<div class="hist-empty">还没有历史。下次点「清空这面墙」，这一批照片就会存到这里。</div>';
+    return 0;
+  }
+  list.innerHTML = '';
+  r.items.slice().reverse().forEach(function (it) {
+    const row = document.createElement('div');
+    row.className = 'hist-item';
+    const label = document.createElement('span');
+    const b = document.createElement('b');
+    b.textContent = '第 ' + it.n + ' 批';
+    label.appendChild(b);
+    const cnt0 = document.createElement('span');
+    cnt0.textContent = '　' + (it.photos || 0) + ' 张';
+    label.appendChild(cnt0);
+    const when = fmtHistWhen(it.updated);
+    if (when) {
+      const m = document.createElement('span');
+      m.className = 'hm';
+      m.textContent = when;
+      label.appendChild(m);
+    }
+    row.appendChild(label);
+    const del = document.createElement('button');
+    del.className = 'act';
+    del.textContent = '删掉这批';
+    del.addEventListener('click', async function () {
+      const sure = confirm('删掉历史第 ' + it.n + ' 批（' + (it.photos || 0) + ' 张）？\n\n'
+        + '· 只删这一批，现在这面墙和别的批次都不受影响\n'
+        + '· 删了就找不回来了');
+      if (!sure) return;
+      del.disabled = true; del.textContent = '删除中…';
+      const rr = await syncHistDel(it.n);
+      if (!rr.ok) { del.disabled = false; del.textContent = '删掉这批'; showHint('删除失败，检查网络后重试'); return; }
+      showHint('历史第 ' + it.n + ' 批已删掉');
+      renderHist();
+    });
+    row.appendChild(del);
+    list.appendChild(row);
+  });
+  return r.items.length;
+}
+
 /* 用同步码接回另一面墙：先把本机现有照片补传上去，再合并云端清单。
    —— 只 pull 不 push 的话，本机这些照片会从清单里被挤掉。 */
 async function syncJoin(rawCode) {
@@ -2667,17 +2849,64 @@ function bindSyncUI() {
   });
   document.getElementById('btnWipe').addEventListener('click', async function () {
     if (!syncCode) return;
-    const okSure = confirm('要删掉云端的这面墙吗？\n\n'
-      + '· 云端（' + syncCode + '）的原图会被全部删除，同步码立刻失效\n'
-      + '· 这台设备上的照片不受影响，仍可导出\n'
-      + '· 这个操作不能撤销');
+    const n = photos.filter(function (p) { return !p.demo; }).length;
+    const okSure = confirm('清空这面墙？\n\n'
+      + '· 眼前这面墙会变空，但照片不删：这一批会整批存进「历史」，随时能翻出来\n'
+      + '· 同步码还是 ' + syncCode + '，一点没变，下次用同一个码还能接回这面墙\n'
+      + '· 想彻底删干净，清空之后在历史里还能再删');
     if (!okSure) return;
     const b = this;
-    b.disabled = true; b.textContent = '删除中…';
+    b.disabled = true; b.textContent = '清空中…';
     const r = await syncWipe();
-    b.disabled = false; b.textContent = '删掉这面墙的云端副本';
-    showHint(r.ok ? '云端副本已删除（' + (r.removed || 0) + ' 张原图）' : '删除失败，检查网络后重试');
-    if (r.ok) { syncCode = ''; syncRemoteCount = 0; renderSyncCode(); markSync('ok'); }
+    b.disabled = false; b.textContent = '清空这面墙（照片存进历史）';
+    if (!r.ok) { showHint('清空失败，检查网络后重试（照片都还在）'); return; }
+    // 归档成功之后才动本机：云端的备份已经落地，此刻清本机不会丢东西
+    const gone = await clearLocalPhotos();
+    syncRemoteCount = 0;
+    markSync('ok');
+    // 注意：这里**不重取同步码**，也不清 syncCode —— 需求要求识别码保持一致
+    showHint(r.archived
+      ? '已清空，原来的 ' + (r.archivedPhotos || Math.max(n, gone)) + ' 张存进历史第 ' + r.archived
+        + ' 批（同步码不变）'
+      : '这面墙本来就是空的，没有要存的历史', 5000);
+    renderHist();
+  });
+
+  document.getElementById('btnHist').addEventListener('click', function () {
+    const box = document.getElementById('histBox');
+    const on = box.classList.toggle('on');
+    this.setAttribute('aria-expanded', on ? 'true' : 'false');
+    if (on) renderHist();
+    else document.getElementById('histList').innerHTML = '<div class="hist-empty">点上面的「看看历史」展开</div>';
+  });
+
+  document.getElementById('btnPurge').addEventListener('click', async function () {
+    if (!syncCode) return;
+    const sure = confirm('彻底删除这面墙的全部数据？\n\n'
+      + '· 现在的照片 + 历史里的所有批次，一起删掉\n'
+      + '· 同步码 ' + syncCode + ' 会立刻失效，别的设备再也接不回来\n'
+      + '· 这个操作没法撤销');
+    if (!sure) return;
+    const again = confirm('再确认一次：删掉之后真的找不回来了，要继续吗？');
+    if (!again) return;
+    const b = this;
+    b.disabled = true; b.textContent = '删除中…';
+    const r = await syncPurge();
+    b.disabled = false; b.textContent = '彻底删除这面墙的全部数据（含历史）';
+    if (!r.ok) { showHint('删除失败，检查网络后重试'); return; }
+    await clearLocalPhotos();
+    syncCode = ''; syncRemoteCount = 0;
+    renderSyncCode();                                     // 同步码没了，两个按钮置灰
+    const tx0 = document.getElementById('syncCodeText');
+    if (tx0) tx0.textContent = '已彻底删除';
+    markSync('ok');
+    const box = document.getElementById('histBox');
+    if (box) box.classList.remove('on');
+    const hl = document.getElementById('histList');
+    if (hl) hl.innerHTML = '<div class="hist-empty">点上面的「看看历史」展开</div>';
+    const hc = document.getElementById('histCount');
+    if (hc) hc.textContent = '0';
+    showHint('这面墙的云端数据已彻底删除（含 ' + (r.archivedBatches || 0) + ' 批历史）', 5000);
   });
 }
 
@@ -2811,11 +3040,30 @@ function locateLabel(lon, lat) {
   return nc ? nc.name : '未知地点';
 }
 
+/* 上传进度：只有真正在做耗时活（读文件/解尺寸/读 EXIF）时才出现，
+   干完立刻收掉，不留一条 100% 的条子在屏幕上。 */
+let progLog = [];
+const progEl = document.getElementById('prog');
+const progBar = progEl ? progEl.querySelector('.bar > i') : null;
+const progTxt = progEl ? progEl.querySelector('b') : null;
+function progSet(i, total) {
+  if (!progEl) return;
+  progLog.push({ i: i, n: total });
+  if (progLog.length > 200) progLog.shift();
+  if (progBar) progBar.style.width = (total ? Math.round(i / total * 100) : 0) + '%';
+  if (progTxt) progTxt.textContent = total > 1
+    ? '正在读取 ' + i + ' / ' + total + ' 张…'
+    : '正在读取…';
+  progEl.classList.add('on');
+}
+function progHide() { if (progEl) progEl.classList.remove('on'); }
+
 async function addFiles(files) {
   const all = Array.prototype.slice.call(files);
   const arr = all.filter(function (f) { return /^image\//.test(f.type); });
   const notImage = all.length - arr.length;
   if (!arr.length) {
+    progHide();
     showHint(notImage ? ('这 ' + notImage + ' 个文件不是照片，没能加进来。') : '没有可用的照片。');
     return;
   }
@@ -2836,10 +3084,8 @@ async function addFiles(files) {
   if (btnAdd) btnAdd.setAttribute('aria-busy', 'true');
 
   for (let i = 0; i < take.length; i++) {
-    // 一次加十几张时要有进度：什么都不显示，用户会以为按钮没反应
-    if (take.length > 2 && i < take.length - 1) {
-      showHint('正在读取 ' + (i + 1) + ' / ' + take.length + ' 张…', 120000);
-    }
+    // 进度条：一次加十几张时要看得出还剩多少
+    progSet(i + 1, take.length);
     let url = await readAsDataURL(take[i]);
     let sz = await loadSize(url);
     if (sz.w < 8) {
@@ -2880,6 +3126,8 @@ async function addFiles(files) {
     if (photos.length >= 40) break;
   }
   if (btnAdd) btnAdd.removeAttribute('aria-busy');
+  progSet(take.length, take.length);          // 走到 100% 再收，避免 96% 直接消失
+  setTimeout(progHide, 240);
 
   // 有国外照片却还停在中国档：先切到全球，否则这些针会被裁到国境线上
   if (sawOutside && scope !== 'world') setScope('world', false);
@@ -3290,6 +3538,9 @@ function boot() {
   // 顺序不能反：本机记录比云端新（刚传完还没写清单）时，先 pull 会被旧清单盖不住，
   // 但先把本机读回来就能保证「本机已有的绝不被云端清单挤掉」。
   restoreFromDB().then(function (n) {
+    // 先认领设备身份：本机 key 是刚造的（说明存储被清过），服务端可能还记得这台手机
+    return syncAdoptServerKey().then(function () { return n; });
+  }).then(function (n) {
     if (n) showHint('已恢复上次的 ' + n + ' 张照片（这台设备或云端存着）');
     return syncPull();
   }).then(function (k) {
@@ -3320,6 +3571,8 @@ window.__dbg = {
   baseS: function () { return baseView.s; },
   dbCount: function () { return idbRun('readonly', function (st) { return st.count(); }); },
   wallKey: function () { return wallKey; },
+  adopt: function () { adoptTried = false; return syncAdoptServerKey(); },
+  progLog: function () { return progLog.slice(); },
   layoutState: function () {
     return layoutInfo ? { fits: !!layoutInfo.fits, cascade: !!layoutInfo.cascade,
       cells: layoutInfo.cells ? layoutInfo.cells.size : 0, n: photos.length } : null;
@@ -3418,6 +3671,9 @@ window.__dbg = {
     return out;
   },
   syncJoin: syncJoin, syncPull: syncPull, syncWipe: syncWipe,
+  // R18：历史批次 / 彻底删除（清空 = 归档，本机与识别码都不受影响）
+  syncHistory: syncHistory, syncHistDel: syncHistDel, syncPurge: syncPurge,
+  renderHist: renderHist, clearLocalPhotos: clearLocalPhotos,
   syncPushIndex: syncPushIndex,
   syncInfo: function () {
     return {
