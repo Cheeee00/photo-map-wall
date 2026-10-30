@@ -392,3 +392,17 @@ key 只是一串随机十六进制，服务端没有「已注册的 key 名单�
 **顺带修的隐式转换坑**：`pad2` 原写 `(n) => (n < 10 ? '0' + n : String(n))`，
 `arcSlots` 改成返回**字符串**数组后，`"01" < 10` 为真（JS 把 `"01"` 转成数字 1），于是 01 被补成 `001`。
 改成 `const n = Number(v) || 0;` 先转数字再比。
+
+## R18 收尾 · 2026-10-30：线上同步 dist + GitHub 三方对账
+
+| # | 动作 | 结果 |
+|---|---|---|
+| 1 | `npx wrangler pages deploy`（靠 `wrangler.toml` 的 `pages_build_output_dir="dist"`） | 部署 `https://a68496ed.photo-map-wall.pages.dev`，`wall.orange0323.dpdns.org` 同步生效 |
+| 2 | 线上字节比对 | `online=1188735 / local dist=1188368`，差 367 B = Cloudflare 注入的 beacon；`IndexOf(local)==0` 且去掉尾部 367 B 后完全相等 ✅ |
+| 3 | `tools/stage_push.ps1` 修 `-File` | **PowerShell 5.1 没有 `Get-ChildItem -File`**（pwsh 6+ 才有），带 `-Delete` 时会直接 `A parameter cannot be found that matches parameter name 'File'`。改成 `Where-Object { Test-Path -LiteralPath $_.FullName -PathType Leaf }`，并新增 `-DeleteOnly` |
+| 4 | GitHub 删除误提交产物 | `dist/index.html` 在 `.gitignore` 里却已入库（早期提交没有该条）。用 `-DeleteOnly -Delete @('dist/index.html')` 清掉 |
+| 5 | `tools/check_github.mjs` 加残留分组 | GitHub 上还留着 435 个本地已排除的路径（`.wrangler` 状态库、`test/shots` 截图），把「业务文件是否同步」的结论搅成 exit=1。改为归入「残留的应删路径，不计入结论」，只对业务文件判一致性 |
+| 6 | 最终核对 | `node tools/check_github.mjs` → **GitHub 与本地一致 ✅ exit=0**；`node tools/check_docs.mjs` → 文档体检通过 |
+| 7 | 线上回归 | `node test/cdp-live.mjs` 17/17；`cdp-history` 29/29；`cdp-sync` 32/32 |
+
+**教训**：`-Delete` 是 `[string[]]`，从命令行传单个字符串会被当一个文件名，必须写 `-Delete @('a','b')`。
