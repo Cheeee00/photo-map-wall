@@ -17,6 +17,15 @@
 
 发现不一致就原样再推一次（接口是幂等的），第二轮通常才带上。
 
+### `.gitignore` 写了不等于从没入库
+
+`dist/`、`.wrangler/`、`test/shots/` 都在 `.gitignore` 里，但它们**早于那条规则**就已被提交过，
+之后一直躺在远端。本地新 clone 看不到、`git status` 也干净，只有拉 tree API 逐条比才暴露：
+一次比对显示 GitHub 522 个文件 vs 本地 87 个，多出来的是 435 个 `.wrangler` 状态库与截图。
+`tools/check_github.mjs` 现在把这类路径归入「残留的应删路径，不计入结论」——
+否则 435 行噪音会把「业务文件到底同步没同步」的答案埋掉。清理用
+`tools/stage_push.ps1 -DeleteOnly -Delete @('<路径>')`。
+
 ### 文件名含方括号时 Copy-Item 会当通配符
 
 `functions/api/wall/[[path]].js` 里的 `[[path]]` 在 `-Path` 参数下被当通配符匹配（匹配 `p`/`a`/`t`/`h` 中任一字符），于是文件被静默跳过。**必须用 `-LiteralPath`**。
@@ -35,6 +44,19 @@ Node 24 的全局 `fetch` 走 keep-alive 连接池，进程退出时会在 libuv
 
 **`.NET` 的 `[IO.File]` 不吃 PowerShell 的当前目录**：`cd` 之后写 `[IO.File]::ReadAllText('README.md')` 仍按进程初始目录解析，报 `Could not find file 'D:\DSH\创业项目\README.md'`。要么传绝对路径，要么干脆用 edit/write 工具改文件。
 
+### PowerShell 5.1 没有 `Get-ChildItem -File` / `-Directory` 按类型过滤
+
+那是 pwsh 6+ 才有的参数。本机 `pwsh` 实为 PS 5.1，写成 `Get-ChildItem -Recurse -File` 会直接
+`A parameter cannot be found that matches parameter name 'File'`。
+而且**它藏在执行路径深处** —— `tools/stage_push.ps1` 只在带 `-Delete` 时才走到这一行，
+所以「平时跑得好好的脚本，某天传了新参数就崩」。改成
+`Get-ChildItem -Path $d -Recurse | Where-Object { Test-Path -LiteralPath $_.FullName -PathType Leaf }`。
+
+### `[string[]]` 参数从命令行传单个字符串会被当数组的一个元素
+
+`-Delete 'dist/index.html'` 与 `-Delete @('dist/index.html')` 在「只有一个文件」时恰好等价，
+但**语义完全不同**；一旦有人写成 `-Delete 'a,b'` 就变成一个叫 `a,b` 的文件名，静默不删。
+脚本里凡是 `[string[]]` 都应在注释里写清「必须用 `@(...)`」。
 
 ### 删「刚被浏览器写完的图片」会让 node 硬崩
 
