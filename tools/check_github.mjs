@@ -61,13 +61,25 @@ for (const [p, s] of local) {
 }
 for (const p of remote.keys()) if (!local.has(p)) onlyRemote.push(p);
 
+// GitHub 上残留的本地已排除路径（.wrangler 状态、test/shots 截图、dist 构建产物）不算不一致，
+// 单独归入 junk —— 它们该删，但不该把「业务文件是否同步」的结论搅浑。
+const junk = onlyRemote.filter(p => !local.has(p) && !isLive(p));
+const reallyRemote = onlyRemote.filter(isLive);
+function isLive(p) {
+  if (skipTop.some(t => p === t || p.startsWith(t + '/'))) return false;
+  if (skipSub.some(t => p === t || p.startsWith(t + '/'))) return false;
+  return true;
+}
+
 console.log(`本地 ${local.size} 个文件 / GitHub ${remote.size} 个文件`);
 if (onlyLocal.length) console.log('只在本地（未上传）：\n  ' + onlyLocal.join('\n  '));
-if (onlyRemote.length) console.log('只在 GitHub（本地已删）：\n  ' + onlyRemote.join('\n  '));
+if (junk.length) console.log(`GitHub 上残留的应删路径（${junk.length} 个，不计入结论）：\n  ` + junk.slice(0, 8).join('\n  ') + (junk.length > 8 ? `\n  …另 ${junk.length - 8} 个` : ''));
+if (reallyRemote.length) console.log('只在 GitHub（本地已删）：\n  ' + reallyRemote.join('\n  '));
 if (diffSize.length) console.log('大小不一致：\n  ' + diffSize.join('\n  '));
 
-const ok = !onlyLocal.length && !onlyRemote.length && !diffSize.length;
+const ok = !onlyLocal.length && !reallyRemote.length && !diffSize.length;
 console.log(ok ? 'GitHub 与本地一致 ✅' : 'GitHub 与本地不一致 ❌');
+if (junk.length) console.log(`提示：清掉残留请跑 tools/stage_push.ps1 -DeleteOnly -Delete @('<路径>')`);
 // 不主动关掉 undici 的 keep-alive 连接，node 退出时会在 libuv 里断言失败
 // （Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)），退出码被改成 1 —— 看着像核对失败。
 try {
