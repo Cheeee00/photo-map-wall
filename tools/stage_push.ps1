@@ -1,11 +1,15 @@
 # 把工作区推到 GitHub（Cheeee00/photo-map-wall，公开库）
-# 用法：& [scriptblock]::Create([IO.File]::ReadAllText((Join-Path (Split-Path $MyInvocation.MyCommand.Path) 'stage_push.ps1'))) -Push
+# 用法：& [scriptblock]::Create([IO.File]::ReadAllText('D:\DSH\创业项目\photo-map-wall\tools\stage_push.ps1')) -Push -Delete @('dist/index.html')
+# 只删不传：把 -Push 换成 -DeleteOnly（gh_push 仍会重传这 87 个文件，幂等，不会造成 diff）
+# 注意：-Delete 是 [string[]]，从命令行传必须写成 -Delete @('a','b')，只传一个字符串会被当文件名。
 param(
   [string]$Repo = 'Cheeee00/photo-map-wall',
   # 用 [scriptblock]::Create(...) 调用时 $MyInvocation.MyCommand.Path 和 $PSScriptRoot 都是空的，给个兜底
   [string]$LocalDir = 'D:\DSH\创业项目\photo-map-wall',
   [string]$Message = 'update',
   [switch]$Push,
+  # 只做删除同步（本地已删、GitHub 上还留着），不重新上传
+  [switch]$DeleteOnly,
   [string]$Branch = 'main',
   # 本地已删、GitHub 上还留着的文件（比如被新测试取代的旧脚本）
   [string[]]$Delete = @()
@@ -24,7 +28,8 @@ New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
 $n = 0
 $bytes = 0
-Get-ChildItem -Path $LocalDir -Recurse -File | ForEach-Object {
+# -File 是 pwsh 6+ 的参数，本机是 PowerShell 5.1 → 用 Test-Path -PathType Leaf 过滤
+Get-ChildItem -Path $LocalDir -Recurse | Where-Object { Test-Path -LiteralPath $_.FullName -PathType Leaf } | ForEach-Object {
   $rel = $_.FullName.Substring($LocalDir.Length).TrimStart('\')
   $skip = $false
   foreach ($p in $skipTop) { if ($rel -eq $p -or $rel.StartsWith($p + '\')) { $skip = $true; break } }
@@ -44,6 +49,13 @@ Get-ChildItem -Path $LocalDir -Recurse -File | ForEach-Object {
 "staged: $n files / $($bytes) bytes -> $stage"
 
 if ($Push) {
+  $sp = 'C:\Users\ChenLong\.dsh\scripts\gh_push.ps1'
+  if (-not (Test-Path $sp)) { throw "找不到 gh_push.ps1：$sp" }
+  $sb = [scriptblock]::Create([IO.File]::ReadAllText($sp))
+  & $sb -Repo $Repo -LocalDir $stage -Message $Message -Branch $Branch -Proxy 'http://127.0.0.1:7897' -Delete $Delete
+}
+
+if ($DeleteOnly) {
   $sp = 'C:\Users\ChenLong\.dsh\scripts\gh_push.ps1'
   if (-not (Test-Path $sp)) { throw "找不到 gh_push.ps1：$sp" }
   $sb = [scriptblock]::Create([IO.File]::ReadAllText($sp))
