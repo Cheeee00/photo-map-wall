@@ -40,4 +40,4 @@
 
 - [x] **截图自动化** —— `tools/make_docs_shots.mjs` 覆盖 01–07 全部配图（真照片 + 注入演示坐标），不再手截。
 - [x] **文档体检** —— `node tools/check_docs.mjs`：链接、反引号路径、占位符数、README 字节数，全部通过。
-- [ ] **TIPS 补本轮坑** —— 把 gh_push summary 不可信、`Copy-Item` 方括号、Node fetch 退出断言这三条补进 `TIPS.md`。
+- [x] **TIPS 补本轮坑** —— 已补：gh_push summary 不可信、`Copy-Item` 方括号、Node fetch 退出断言、PS 5.1 没有 `-File`、`[string[]]` 传参、`.gitignore` 不等于没入库（R18 收尾）。
