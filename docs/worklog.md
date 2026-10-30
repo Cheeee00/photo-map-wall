@@ -289,7 +289,7 @@
 **踩的坑（三条）**
 - 一次性补丁脚本里用 `String.replace(regex, 字符串)` 拼代码，替换串里的 `$&` / `$` 会被当捕获组引用 → 用 `split/join` 或函数式 `replace` 更安全；这次替换串恰好没有 `$`，但 CRLF 必须按 `\r?\n` 匹配（文件是 CRLF 为主、混了 82 行 LF）。
 - `.NET` 的 `[IO.File]` API **不吃 PowerShell 的当前目录**：`cd` 之后写 `'README.md'` 仍按进程初始目录解析，报 `Could not find file 'D:\DSH\创业项目\README.md'`。必须传绝对路径（这也是"改文件一律用 edit/write 工具"的又一条理由）。
-- 改完 `src/index.template.html` 必须 `node src/build.mjs`，它才会同时写 `index.html` 与 `dist/index.html`；只改一处会让 `wrangler pages dev` 测到旧文件。
+- 改完 `src/index.template.html` 必须 `node src/build.mjs`，它才会同时写根目录 `index.html` 与 `dist/` 下的部署副本；只改一处会让 `wrangler pages dev` 测到旧文件。（该部署副本不入库，`.gitignore` 已排除。）
 
 **实测**
 - `test/cdp-reorder.mjs` **16/16**：落点偏差 `dx=0.0 dy=0.0`、`p.pos={fx:0.4195,fy:0.8575}`、其余 7 张位移 0、刷新后坐标逐像素相同、拖到 (1596,996) 不出界、自动排位后 `pos=null` 且零交叉。
@@ -400,7 +400,7 @@ key 只是一串随机十六进制，服务端没有「已注册的 key 名单�
 | 1 | `npx wrangler pages deploy`（靠 `wrangler.toml` 的 `pages_build_output_dir="dist"`） | 部署 `https://a68496ed.photo-map-wall.pages.dev`，`wall.orange0323.dpdns.org` 同步生效 |
 | 2 | 线上字节比对 | `online=1188735 / local dist=1188368`，差 367 B = Cloudflare 注入的 beacon；`IndexOf(local)==0` 且去掉尾部 367 B 后完全相等 ✅ |
 | 3 | `tools/stage_push.ps1` 修 `-File` | **PowerShell 5.1 没有 `Get-ChildItem -File`**（pwsh 6+ 才有），带 `-Delete` 时会直接 `A parameter cannot be found that matches parameter name 'File'`。改成 `Where-Object { Test-Path -LiteralPath $_.FullName -PathType Leaf }`，并新增 `-DeleteOnly` |
-| 4 | GitHub 删除误提交产物 | `dist/index.html` 在 `.gitignore` 里却已入库（早期提交没有该条）。用 `-DeleteOnly -Delete @('dist/index.html')` 清掉 |
+| 4 | GitHub 删除误提交产物 | 构建产物目录下的 `index.html` 在 `.gitignore` 里却已入库（早期提交没有该条），属于误提交，用 `-DeleteOnly -Delete @(...)` 清掉；本地同名文件一并删除，`node src/build.mjs` 会重新生成 |
 | 5 | `tools/check_github.mjs` 加残留分组 | GitHub 上还留着 435 个本地已排除的路径（`.wrangler` 状态库、`test/shots` 截图），把「业务文件是否同步」的结论搅成 exit=1。改为归入「残留的应删路径，不计入结论」，只对业务文件判一致性 |
 | 6 | 最终核对 | `node tools/check_github.mjs` → **GitHub 与本地一致 ✅ exit=0**；`node tools/check_docs.mjs` → 文档体检通过 |
 | 7 | 线上回归 | `node test/cdp-live.mjs` 17/17；`cdp-history` 29/29；`cdp-sync` 32/32 |
